@@ -23,7 +23,6 @@ use App\Services\Gratitude\EarnedPointService;
 use App\Services\Gratitude\GratitudeService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
-use Illuminate\Validation\ValidationException;
 
 class GratitudeController extends Controller
 {
@@ -53,30 +52,28 @@ class GratitudeController extends Controller
 
     public function store(Request $request)
     {
-       
+
         $validated = $request->validate([
             'category' => 'nullable|array',
             'category.*' => 'integer|in:1,2,3',
-            'first_name' => 'required|string|max:255',
-            'last_name' => 'required|string|max:255',
-            'email' => 'required|email|max:255',
-            'client_id' => 'required|integer',
+            'first_name' => 'nullable|string|max:255',
+            'last_name' => 'nullable|string|max:255',
+            'email' => 'nullable|email|max:255',
+            'client_id' => 'nullable|integer',
             'gratitude_number' => 'nullable|string|max:255|unique:gratitudes,gratitudeNumber',
         ]);
-    
 
-        $prefixes   = ['1' => 'G', '2' => 'T', '3' => 'P'];
-        $category   = $validated['category'] ?? null;
+        $prefixes = ['1' => 'G', '2' => 'T', '3' => 'P'];
+        $category = $validated['category'] ?? null;
         $categoryId = is_array($category) ? ($category[0] ?? null) : $category;
-        $prefix     = $prefixes[(string) $categoryId] ?? 'G';
-
+        $prefix = $prefixes[(string) $categoryId] ?? 'G';
 
         $gratitude = $this->gratitudeService->createAccount(
             array_merge($validated, ['_prefix' => $prefix])
         );
 
         return response()->json([
-            'message'  => 'Gratitude account created',
+            'message' => 'Gratitude account created',
             'gratitude' => $gratitude,
             'prefix_used' => $prefix,
         ], 201);
@@ -121,7 +118,9 @@ class GratitudeController extends Controller
                 'cancelled_points' => (int) $gratitude->totalCancelledPoints,
                 'expired_points' => (int) $gratitude->totalExpiredPoints,
                 'pending_points' => (int) EarnedPoint::where('gratitudeNumber', $gratitudeNumber)
-                    ->where('status', 'pending')
+                    ->activeStatus()
+                    ->whereNotNull('usable_date')
+                    ->where('usable_date', '>', Carbon::now())
                     ->sum('points'),
             ],
             'last_activity_at' => $gratitude->last_activity_at?->toISOString(),
@@ -309,17 +308,17 @@ class GratitudeController extends Controller
         $gratitude = Gratitude::where('gratitudeNumber', $gratitudeNumber)->firstOrFail();
 
         $validated = $request->validate([
-            'benefit_id'    => 'nullable|exists:gratitude_benefits,id',
-            'journey_id'    => 'nullable|integer',
-            'benefit_name'  => 'required_without:benefit_id|string|max:255|nullable',
-            'benefit_key'   => 'nullable|string|max:255',
-            'description'   => 'required|string',
+            'benefit_id' => 'nullable|exists:gratitude_benefits,id',
+            'journey_id' => 'nullable|integer',
+            'benefit_name' => 'required_without:benefit_id|string|max:255|nullable',
+            'benefit_key' => 'nullable|string|max:255',
+            'description' => 'required|string',
             'benefit_value' => 'nullable|string|max:255',
-            'value_type'    => 'nullable|string|max:255',
-            'project_data'  => 'nullable|array',
-            'date'          => 'required|date',
-            'status'        => 'nullable|string|max:50',
-            'notes'         => 'nullable|string',
+            'value_type' => 'nullable|string|max:255',
+            'project_data' => 'nullable|array',
+            'date' => 'required|date',
+            'status' => 'nullable|string|max:50',
+            'notes' => 'nullable|string',
         ]);
 
         // Auto-resolve benefit_name / benefit_key from the linked benefit when omitted
@@ -327,31 +326,31 @@ class GratitudeController extends Controller
             $benefit = GratitudeBenefit::find($validated['benefit_id']);
             if ($benefit) {
                 $validated['benefit_name'] = $validated['benefit_name'] ?? $benefit->name;
-                $validated['benefit_key']  = $validated['benefit_key']  ?? $benefit->benefit_key;
+                $validated['benefit_key'] = $validated['benefit_key'] ?? $benefit->benefit_key;
             }
         }
 
         $entry = GratitudeEarnedBenefit::create(array_merge($validated, [
             'gratitudeNumber' => $gratitude->gratitudeNumber,
-            'status'          => $validated['status'] ?? 'active',
+            'status' => $validated['status'] ?? 'active',
         ]));
 
         return response()->json([
-            'message'        => 'Earned benefit recorded',
+            'message' => 'Earned benefit recorded',
             'earned_benefit' => [
-                'id'            => $entry->id,
+                'id' => $entry->id,
                 'gratitudeNumber' => $entry->gratitudeNumber,
-                'benefit_name'  => $entry->benefit_name,
-                'benefit_key'   => $entry->benefit_key,
+                'benefit_name' => $entry->benefit_name,
+                'benefit_key' => $entry->benefit_key,
                 'benefit_value' => $entry->benefit_value,
-                'value_type'    => $entry->value_type,
-                'description'   => $entry->description,
-                'journey_id'    => $entry->journey_id,
-                'project_data'  => $entry->project_data,
-                'date'          => $entry->date?->toDateString(),
-                'status'        => $entry->status,
-                'notes'         => $entry->notes,
-                'created_at'    => $entry->created_at?->toISOString(),
+                'value_type' => $entry->value_type,
+                'description' => $entry->description,
+                'journey_id' => $entry->journey_id,
+                'project_data' => $entry->project_data,
+                'date' => $entry->date?->toDateString(),
+                'status' => $entry->status,
+                'notes' => $entry->notes,
+                'created_at' => $entry->created_at?->toISOString(),
             ],
         ], 201);
     }

@@ -3,6 +3,8 @@
 namespace App\Models\Gratitude;
 
 use App\Models\User;
+use Carbon\CarbonInterface;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Spatie\Activitylog\LogOptions;
@@ -48,6 +50,7 @@ class EarnedPoint extends Model
         'usable_date' => 'date',
         'expires_at' => 'datetime',
         'expires_at_manual' => 'boolean',
+        'status' => 'boolean',
         'date' => 'date',
         'redemption_history' => 'array',
         'points_breakdown' => 'array',
@@ -89,8 +92,58 @@ class EarnedPoint extends Model
         return $this->belongsTo(Cancellation::class, 'cancel_id');
     }
 
-    public function scopeActiveStatus($query)
+    public function scopeActiveStatus(Builder $query): Builder
     {
-        return $query->whereIn('status', ['active', 'approved', 1, '1']);
+        return $query->whereIn('status', [true, 1, '1']);
+    }
+
+    public function scopeUsableAsOf(Builder $query, CarbonInterface $date): Builder
+    {
+        return $query->where(function ($q) use ($date) {
+            $q->whereNull('usable_date')->orWhere('usable_date', '<=', $date);
+        });
+    }
+
+    public function scopeNotExpiredAsOf(Builder $query, CarbonInterface $date): Builder
+    {
+        return $query->where(function ($q) use ($date) {
+            $q->whereNull('expires_at')->orWhere('expires_at', '>', $date);
+        });
+    }
+
+    public function scopeWithRemainingPoints(Builder $query): Builder
+    {
+        return $query->whereRaw('COALESCE(points, 0) > COALESCE(redeemed_points, 0) + COALESCE(cancelled_points, 0)');
+    }
+
+    public function scopeRedeemable(Builder $query, string $gratitudeNumber, CarbonInterface $date): Builder
+    {
+        return $query
+            ->where('gratitudeNumber', $gratitudeNumber)
+            ->activeStatus()
+            ->whereNull('cancel_id')
+            ->notExpiredAsOf($date)
+            ->usableAsOf($date)
+            ->withRemainingPoints();
+    }
+
+    public function scopeQualifyingForLevel(Builder $query, string $gratitudeNumber, CarbonInterface $from, CarbonInterface $to): Builder
+    {
+        return $query
+            ->where('gratitudeNumber', $gratitudeNumber)
+            ->activeStatus()
+            ->whereNull('cancel_id')
+            ->whereNotNull('usable_date')
+            ->where('usable_date', '>=', $from)
+            ->where('usable_date', '<=', $to);
+    }
+
+    public function setStatusAttribute(mixed $value): void
+    {
+        if (is_string($value)) {
+            $value = strtolower(trim($value));
+        }
+
+        $this->attributes['status'] = ! in_array($value, [false, 0, '0', 'false', 'inactive', 'expired', 'cancelled', 'canceled', 'rejected'], true);
     }
 }

@@ -34,6 +34,9 @@ return new class extends Migration
             $table->timestamp('last_activity_at')->nullable();
             $table->softDeletes();
             $table->timestamps();
+
+            $table->index(['status', 'is_active']);
+            $table->index('level');
         });
     }
 

@@ -17,6 +17,8 @@ const form = ref({
     partner_points_per_dollar: 35,
     earned_expire_days: 730,
     bonus_expire_days: 730,
+    level_interval_years: 2,
+    min_journeys: 0,
 });
 const levelImage = ref<File | null>(null);
 const levelIcon = ref<File | null>(null);
@@ -55,6 +57,8 @@ const submit = async () => {
         formData.append('partner_points_per_dollar', String(form.value.partner_points_per_dollar));
         formData.append('earned_expire_days', String(form.value.earned_expire_days));
         formData.append('bonus_expire_days', String(form.value.bonus_expire_days));
+        formData.append('level_interval_years', String(form.value.level_interval_years));
+        formData.append('min_journeys', String(form.value.min_journeys));
 
         if (levelImage.value) formData.append('level_image', levelImage.value);
         if (levelIcon.value) formData.append('level_icon', levelIcon.value);
@@ -77,6 +81,8 @@ const submit = async () => {
             partner_points_per_dollar: 35,
             earned_expire_days: 730,
             bonus_expire_days: 730,
+            level_interval_years: 2,
+            min_journeys: 0,
         };
         levelImage.value = null;
         levelIcon.value = null;
@@ -132,6 +138,14 @@ const submit = async () => {
                             <Label>Bonus Points Expire After (Days)</Label>
                             <Input type="number" min="1" v-model="form.bonus_expire_days" required />
                             <p class="text-xs text-muted-foreground mt-1">Set a different expiry for bonus points if needed.</p>
+                        </div>
+                        <div>
+                            <Label>Cycle Length (Years)</Label>
+                            <Input type="number" min="1" v-model="form.level_interval_years" required />
+                        </div>
+                        <div>
+                            <Label>Minimum Journeys Per Cycle</Label>
+                            <Input type="number" min="0" v-model="form.min_journeys" required />
                         </div>
                     </div>
 

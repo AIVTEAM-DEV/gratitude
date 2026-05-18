@@ -37,17 +37,21 @@ class GratitudeLevelController extends Controller
             'partner_points_per_dollar' => 'nullable|numeric|min:1',
             'earned_expire_days' => 'nullable|integer|min:1',
             'bonus_expire_days' => 'nullable|integer|min:1',
+            'level_interval_years' => 'nullable|integer|min:1',
+            'min_journeys' => 'nullable|integer|min:0',
             'level_rules' => 'nullable|string', // JSON string from FormData
             'level_image' => 'nullable|file|mimes:jpg,jpeg,png,webp,gif,svg|max:4096',
             'level_icon' => 'nullable|file|mimes:jpg,jpeg,png,webp,gif,svg|max:4096',
         ]);
 
-        $data = $request->only('name', 'min_points', 'max_points', 'earned_expire_days', 'bonus_expire_days');
+        $data = $request->only('name', 'min_points', 'max_points', 'earned_expire_days', 'bonus_expire_days', 'level_interval_years', 'min_journeys');
         $data['status'] = filter_var($request->input('status', true), FILTER_VALIDATE_BOOLEAN);
         $data['redemption_points_per_dollar'] = $request->input('redemption_points_per_dollar', 35);
         $data['partner_points_per_dollar'] = $request->input('partner_points_per_dollar', $data['redemption_points_per_dollar']);
         $data['earned_expire_days'] = (int) $request->input('earned_expire_days', 730);
         $data['bonus_expire_days'] = (int) $request->input('bonus_expire_days', 730);
+        $data['level_interval_years'] = (int) $request->input('level_interval_years', 2);
+        $data['min_journeys'] = (int) $request->input('min_journeys', 0);
 
         if ($request->filled('level_rules')) {
             $data['level_rules'] = json_decode($request->input('level_rules'), true);
@@ -76,12 +80,14 @@ class GratitudeLevelController extends Controller
             'partner_points_per_dollar' => 'nullable|numeric|min:1',
             'earned_expire_days' => 'nullable|integer|min:1',
             'bonus_expire_days' => 'nullable|integer|min:1',
+            'level_interval_years' => 'nullable|integer|min:1',
+            'min_journeys' => 'nullable|integer|min:0',
             'level_rules' => 'nullable|string',
             'level_image' => 'nullable|file|mimes:jpg,jpeg,png,webp,gif,svg|max:4096',
             'level_icon' => 'nullable|file|mimes:jpg,jpeg,png,webp,gif,svg|max:4096',
         ]);
 
-        $data = $request->only('name', 'min_points', 'max_points', 'earned_expire_days', 'bonus_expire_days');
+        $data = $request->only('name', 'min_points', 'max_points', 'earned_expire_days', 'bonus_expire_days', 'level_interval_years', 'min_journeys');
         // Handle vue sending boolean as string "true" / "false" in FormData
         $data['status'] = filter_var($request->input('status', true), FILTER_VALIDATE_BOOLEAN);
         if ($request->filled('redemption_points_per_dollar')) {
@@ -92,6 +98,8 @@ class GratitudeLevelController extends Controller
         }
         $data['earned_expire_days'] = (int) $request->input('earned_expire_days', $level->earned_expire_days ?: 730);
         $data['bonus_expire_days'] = (int) $request->input('bonus_expire_days', $level->bonus_expire_days ?: 730);
+        $data['level_interval_years'] = (int) $request->input('level_interval_years', $level->level_interval_years ?: 2);
+        $data['min_journeys'] = (int) $request->input('min_journeys', $level->min_journeys ?: 0);
 
         if ($request->has('level_rules')) {
             $rawRules = $request->input('level_rules');

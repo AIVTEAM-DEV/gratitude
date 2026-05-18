@@ -14,7 +14,8 @@ use Illuminate\Support\Facades\DB;
 class PointService
 {
     public function __construct(
-        protected PointExpiryService $pointExpiryService
+        protected PointExpiryService $pointExpiryService,
+        protected PointLedgerService $pointLedgerService,
     ) {}
 
     /**
@@ -28,7 +29,7 @@ class PointService
             'journey_id' => $journeyId,
             'points' => $points,
             'usable_date' => $usableDate,
-            'status' => 'pending',
+            'status' => true,
             'amount' => $amount,
             'description' => $description,
         ]);
@@ -39,15 +40,15 @@ class PointService
      */
     public function activateTierPoints()
     {
-        $pointsToActivate = EarnedPoint::where('status', 'pending')
+        $pointsToActivate = EarnedPoint::activeStatus()
             ->whereDate('usable_date', '<=', Carbon::today())
+            ->whereNull('expires_at')
             ->get();
 
         foreach ($pointsToActivate as $point) {
             $level = $this->resolveLevelForPoint($point->gratitudeNumber);
 
             $point->update([
-                'status' => 'active',
                 'expires_at' => $this->pointExpiryService->calculateEarnedExpiry(
                     Carbon::parse($point->usable_date),
                     $level
@@ -87,9 +88,9 @@ class PointService
         }
 
         return DB::transaction(function () use ($gratitudeNumber, $pointsToRedeem, $reason, $userId) {
-            $allPoints = $this->buildRedemptionQueue($gratitudeNumber);
+            $allPoints = $this->pointLedgerService->redeemableQueue($gratitudeNumber);
 
-            $totalAvailable = $allPoints->sum('remaining_points');
+            $totalAvailable = $allPoints->sum('available_points');
 
             if ($totalAvailable < $pointsToRedeem) {
                 throw new Exception('Insufficient active points available for redemption.');
@@ -112,7 +113,7 @@ class PointService
                     break;
                 }
 
-                $available = $pointRecord->remaining_points;
+                $available = (int) $pointRecord->available_points;
                 $deductAmount = min($available, $remainingToRedeem);
 
                 // Append to the segment's redemption history JSON
@@ -167,7 +168,7 @@ class PointService
         $earnedExpired = 0;
         if ($earnedToExpire->isNotEmpty()) {
             $earnedExpired = EarnedPoint::whereIn('id', $earnedToExpire->pluck('id'))
-                ->update(['status' => 'expired']);
+                ->update(['status' => false]);
         }
 
         $bonusToExpire = BonusPoint::activeStatus()
@@ -197,63 +198,7 @@ class PointService
 
     protected function buildRedemptionQueue(string $gratitudeNumber)
     {
-        $now = Carbon::now();
-
-        $applyFilters = function ($query) use ($gratitudeNumber, $now) {
-            return $query
-                ->where('gratitudeNumber', $gratitudeNumber)
-                ->activeStatus()
-                ->whereNull('cancel_id')
-                ->where(function ($q) use ($now) {
-                    $q->whereNull('expires_at')->orWhere('expires_at', '>', $now);
-                })
-                ->where(function ($q) use ($now) {
-                    $q->whereNull('usable_date')->orWhere('usable_date', '<=', $now);
-                })
-                ->whereRaw('COALESCE(points, 0) > COALESCE(redeemed_points, 0) + COALESCE(cancelled_points, 0)')
-                ->lockForUpdate();
-        };
-
-        $earnedPoints = $applyFilters(EarnedPoint::query())->get();
-        $bonusPoints = $applyFilters(BonusPoint::query())->get();
-
-        return $earnedPoints
-            ->concat($bonusPoints)
-            ->map(function ($point) {
-                $point->remaining_points = max(
-                    0,
-                    (int) $point->points - (int) $point->redeemed_points - (int) $point->cancelled_points
-                );
-
-                return $point;
-            })
-            ->filter(fn ($p) => $p->remaining_points > 0)
-            ->sort(function ($left, $right) {
-                // 1. Soonest-expiring first (nulls last — no expiry = expire last)
-                $leftExpiry = $left->expires_at ? Carbon::parse($left->expires_at)->timestamp : PHP_INT_MAX;
-                $rightExpiry = $right->expires_at ? Carbon::parse($right->expires_at)->timestamp : PHP_INT_MAX;
-                if ($leftExpiry !== $rightExpiry) {
-                    return $leftExpiry <=> $rightExpiry;
-                }
-
-                // 2. Earliest effective date (usable_date > date > created_at)
-                $leftDate = Carbon::parse($left->usable_date ?? $left->date ?? $left->created_at)->timestamp;
-                $rightDate = Carbon::parse($right->usable_date ?? $right->date ?? $right->created_at)->timestamp;
-                if ($leftDate !== $rightDate) {
-                    return $leftDate <=> $rightDate;
-                }
-
-                // 3. Earned before bonus (earned = 1, bonus = 2)
-                $leftType = $left  instanceof BonusPoint ? 2 : 1;
-                $rightType = $right instanceof BonusPoint ? 2 : 1;
-                if ($leftType !== $rightType) {
-                    return $leftType <=> $rightType;
-                }
-
-                // 4. ID tiebreaker
-                return ((int) $left->id) <=> ((int) $right->id);
-            })
-            ->values();
+        return $this->pointLedgerService->redeemableQueue($gratitudeNumber, Carbon::now());
     }
 
     /**

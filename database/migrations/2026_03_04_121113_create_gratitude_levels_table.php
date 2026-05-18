@@ -19,6 +19,7 @@ return new class extends Migration
             $table->unsignedInteger('earned_expire_days')->default(730);
             $table->unsignedInteger('bonus_expire_days')->default(730);
             $table->unsignedSmallInteger('level_interval_years')->default(2);
+            $table->unsignedTinyInteger('min_journeys')->default(0);
             $table->unsignedTinyInteger('jetsetter_min_journeys')->nullable();
             $table->unsignedTinyInteger('jetsetter_min_journey_days')->nullable();
             $table->text('stay_active_rules')->nullable();

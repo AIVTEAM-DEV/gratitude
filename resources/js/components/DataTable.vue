@@ -25,6 +25,8 @@ const props = defineProps<{
     defaultPageSize?: number;
     pageSizeOptions?: number[];
     rowClass?: (row: Record<string, unknown>) => RowClass;
+    showSearch?: boolean;
+    showExports?: boolean;
 }>();
 
 const searchTerm = ref('');
@@ -269,18 +271,20 @@ defineExpose({
 
         <div class="flex flex-wrap items-center justify-between gap-3">
             <div class="flex flex-wrap items-center gap-2">
-                <Button variant="outline" size="sm" @click="exportPdf">
-                    <FileText class="size-4" />
-                    PDF
-                </Button>
-                <Button variant="outline" size="sm" @click="exportExcel">
-                    <FileDown class="size-4" />
-                    Excel
-                </Button>
-                <Button variant="outline" size="sm" @click="printTable">
-                    <Printer class="size-4" />
-                    Print
-                </Button>
+                <template v-if="showExports !== false">
+                    <Button variant="outline" size="sm" @click="exportPdf">
+                        <FileText class="size-4" />
+                        PDF
+                    </Button>
+                    <Button variant="outline" size="sm" @click="exportExcel">
+                        <FileDown class="size-4" />
+                        Excel
+                    </Button>
+                    <Button variant="outline" size="sm" @click="printTable">
+                        <Printer class="size-4" />
+                        Print
+                    </Button>
+                </template>
                 <div class="relative">
                     <Button
                         variant="outline"
@@ -316,7 +320,7 @@ defineExpose({
             </div>
 
             <div class="flex flex-wrap items-center gap-3">
-                <div class="relative w-64">
+                <div v-if="showSearch !== false" class="relative w-64">
                     <Input
                         v-model="searchTerm"
                         :placeholder="searchPlaceholder ?? 'Search users...'"

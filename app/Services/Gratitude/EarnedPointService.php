@@ -27,7 +27,7 @@ class EarnedPointService
             'description' => $data['description'],
             'journey_id' => $data['journey_id'] ?? null,
             'points_breakdown' => $this->pointsBreakdown($data, $usableDate),
-            'status' => $usableDate->isFuture() ? 'pending' : 'active',
+            'status' => true,
             'usable_date' => $usableDate,
             'expires_at' => $this->pointExpiryService->calculateEarnedExpiry($usableDate, $level),
             'project_data' => $earningType === 'journey' ? ($data['project_data'] ?? null) : null,
@@ -69,7 +69,7 @@ class EarnedPointService
             'usable_date' => $usableDate,
             'expires_at' => $expiresAt,
             'expires_at_manual' => $isManual,
-            'status' => $point->status === 'pending' && $usableDate->isFuture() ? 'pending' : 'active',
+            'status' => true,
             'project_data' => $earningType === 'journey' ? ($data['project_data'] ?? $point->project_data) : null,
         ]);
 

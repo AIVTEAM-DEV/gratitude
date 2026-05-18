@@ -32,6 +32,8 @@ watch(isOpen, (newVal) => {
             earned_expire_days: props.level.earned_expire_days ?? 730,
             bonus_expire_days: props.level.bonus_expire_days ?? 730,
             partner_points_per_dollar: props.level.partner_points_per_dollar ?? props.level.redemption_points_per_dollar ?? 35,
+            level_interval_years: props.level.level_interval_years ?? 2,
+            min_journeys: props.level.min_journeys ?? 0,
         };
         levelImage.value = null;
         levelIcon.value = null;
@@ -77,6 +79,8 @@ const submit = async () => {
         formData.append('partner_points_per_dollar', String(form.value.partner_points_per_dollar || form.value.redemption_points_per_dollar || 35));
         formData.append('earned_expire_days', String(form.value.earned_expire_days || 730));
         formData.append('bonus_expire_days', String(form.value.bonus_expire_days || 730));
+        formData.append('level_interval_years', String(form.value.level_interval_years || 2));
+        formData.append('min_journeys', String(form.value.min_journeys || 0));
 
         if (levelImage.value) formData.append('level_image', levelImage.value);
         if (levelIcon.value) formData.append('level_icon', levelIcon.value);
@@ -139,6 +143,14 @@ const submit = async () => {
                         <div>
                             <Label>Bonus Points Expire After (Days)</Label>
                             <Input type="number" min="1" v-model="form.bonus_expire_days" required />
+                        </div>
+                        <div>
+                            <Label>Cycle Length (Years)</Label>
+                            <Input type="number" min="1" v-model="form.level_interval_years" required />
+                        </div>
+                        <div>
+                            <Label>Minimum Journeys Per Cycle</Label>
+                            <Input type="number" min="0" v-model="form.min_journeys" required />
                         </div>
                     </div>
 

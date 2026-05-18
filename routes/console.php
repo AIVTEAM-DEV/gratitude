@@ -10,5 +10,6 @@ Artisan::command('inspire', function () {
 use Illuminate\Support\Facades\Schedule;
 
 Schedule::command('gratitude:activate-points')->daily()->withoutOverlapping();
+Schedule::command('gratitude:recalculate-levels')->daily()->withoutOverlapping();
 Schedule::command('gratitude:expire-points')->daily()->withoutOverlapping();
 Schedule::command('gratitude:check-inactivity')->daily()->withoutOverlapping();

@@ -20,6 +20,7 @@ use App\Models\Gratitude\RedeemPoints;
 use App\Services\Gratitude\BonusPointService;
 use App\Services\Gratitude\CancellationService;
 use App\Services\Gratitude\EarnedPointService;
+use App\Services\Gratitude\GratitudeAccountService;
 use App\Services\Gratitude\GratitudeService;
 use App\Services\Gratitude\TierService;
 use Carbon\Carbon;
@@ -32,6 +33,7 @@ class GratitudeController extends Controller
 {
     public function __construct(
         protected GratitudeService $gratitudeService,
+        protected GratitudeAccountService $gratitudeAccountService,
         protected EarnedPointService $earnedPointService,
         protected BonusPointService $bonusPointService,
         protected CancellationService $cancellationService,
@@ -234,45 +236,37 @@ class GratitudeController extends Controller
         return [];
     }
 
-    public function apiIndex()
+    public function apiIndex(Request $request)
     {
-        $gratitudes = Gratitude::select(
-            'id', 'gratitudeNumber', 'level', 'level_obtained_at',
-            'totalPoints', 'useablePoints', 'totalExpiredPoints',
-            'totalRemainingPoints', 'totalRedeemedPoints', 'totalCancelledPoints',
-            'status', 'is_active', 'systemLevelUpdate', 'last_activity_at', 'created_at', 'updated_at'
-        )
-            ->selectSub(
-                EarnedPoint::selectRaw('COALESCE(SUM(points), 0)')
-                    ->whereColumn('gratitudeNumber', 'gratitudes.gratitudeNumber')
-                    ->where('status', 'pending'),
-                'pending_points'
-            )
-            ->orderBy('updated_at', 'desc')
-            ->get();
-
-        $levels = GratitudeLevel::whereIn('name', $gratitudes->pluck('level')->filter()->unique())
-            ->get()
-            ->keyBy('name');
-
-        $gratitudes->transform(function (Gratitude $gratitude) use ($levels) {
-            $level = $levels->get($gratitude->level);
-            $gratitude->setAttribute('level_icon_url', $level?->level_icon_url);
-            $gratitude->setAttribute('level_image_url', $level?->level_image_url);
-
-            return $gratitude;
-        });
+        $filters = $this->gratitudeAccountService->filters($request->query());
 
         return response()->json([
-            'points' => $gratitudes,
+            'points' => $this->gratitudeAccountService->accounts($filters)->values(),
+            'filters' => $filters,
+            'filter_options' => $this->gratitudeAccountService->filterOptions(),
         ]);
+    }
+
+    public function apiExportAccounts(Request $request, string $format)
+    {
+        $filters = $this->gratitudeAccountService->filters($request->query());
+
+        return match ($format) {
+            'pdf' => $this->gratitudeAccountService->pdfResponse($filters),
+            'excel' => $this->gratitudeAccountService->excelResponse($filters),
+            'print' => $this->gratitudeAccountService->printResponse($filters),
+            default => response()->json(['message' => 'Unsupported export format.'], 404),
+        };
     }
 
     public function apiOverview()
     {
         $totalAccounts = Gratitude::count();
         $totalUsable = Gratitude::sum('useablePoints');
-        $totalPending = EarnedPoint::where('status', 'pending')->sum('points');
+        $totalPending = EarnedPoint::activeStatus()
+            ->whereNotNull('usable_date')
+            ->where('usable_date', '>', Carbon::now())
+            ->sum('points');
         $totalReserved = GratitudeReserve::sum('amount');
         $totalUsedMoney = RedeemPoints::sum('amount') > 0 ? RedeemPoints::sum('amount') : RedeemPoints::sum('points'); // Approximating used money as amount or redeemed points
 
@@ -323,11 +317,7 @@ class GratitudeController extends Controller
     {
         $gratitude = Gratitude::where('gratitudeNumber', $gratitudeNumber)->firstOrFail();
 
-        // Fetch guest info from aivteam API
-        $guestsResponse = $this->aivteamHttp()->get(
-            config('services.aivteam.base_url').'/api/gratitude/get/gratitude-by-number/'.$gratitudeNumber
-        );
-        $guests = $guestsResponse->successful() ? $this->normalizeGuests($guestsResponse->json()) : [];
+        $guests = $gratitude->guests();
 
         $level = GratitudeLevel::where('name', $gratitude->level)->first();
         $benefits = [];
@@ -626,6 +616,17 @@ class GratitudeController extends Controller
         ]);
     }
 
+    public function apiRecalculateLevel($gratitudeNumber)
+    {
+        $gratitude = Gratitude::where('gratitudeNumber', $gratitudeNumber)->firstOrFail();
+        $updated = $this->tierService->recalculateTier($gratitude->gratitudeNumber, 'manual_recalculation');
+
+        return response()->json([
+            'message' => 'Gratitude level recalculated successfully.',
+            'gratitude' => $updated,
+        ]);
+    }
+
     private function buildAccountJourneys(array $guests, $earnedPoints, $bonusPoints, $redemptions): array
     {
         $journeys = [];
@@ -707,19 +708,6 @@ class GratitudeController extends Controller
             ->sortBy(fn ($journey) => ($journey['guest_name'] ?? '').'|'.($journey['label'] ?? ''))
             ->values()
             ->all();
-    }
-
-    private function normalizeGuests(mixed $payload): array
-    {
-        if (! is_array($payload)) {
-            return [];
-        }
-
-        $items = array_is_list($payload)
-            ? $payload
-            : ($payload['guests'] ?? $payload['data'] ?? $payload['members'] ?? []);
-
-        return $this->asList($items);
     }
 
     private function extractJourneysFromGuest(array $guest): array
@@ -887,20 +875,20 @@ class GratitudeController extends Controller
         if ($gratitude && is_array($gratitude->levelHistory)) {
             foreach ($gratitude->levelHistory as $entry) {
                 $changeType = $entry['changeType'] ?? 'maintained';
-                $entryDate  = $entry['date'] ?? null;
+                $entryDate = $entry['date'] ?? null;
                 $parsedDate = $entryDate ? Carbon::parse($entryDate) : null;
 
                 $history->push([
-                    'type'                   => 'level_' . $changeType,
-                    'date'                   => $parsedDate?->toDateString(),
-                    'sort_date'              => $parsedDate?->toISOString() ?? '',
-                    'points'                 => 0,
-                    'description'            => $entry['reason'] ?? 'Level changed',
-                    'source_type'            => 'LevelHistory',
-                    'source_id'              => null,
-                    'level_from'             => $entry['fromLevel'] ?? null,
-                    'level_to'               => $entry['toLevel'] ?? null,
-                    'change_type'            => $changeType,
+                    'type' => 'level_'.$changeType,
+                    'date' => $parsedDate?->toDateString(),
+                    'sort_date' => $parsedDate?->toISOString() ?? '',
+                    'points' => 0,
+                    'description' => $entry['reason'] ?? 'Level changed',
+                    'source_type' => 'LevelHistory',
+                    'source_id' => null,
+                    'level_from' => $entry['fromLevel'] ?? null,
+                    'level_to' => $entry['toLevel'] ?? null,
+                    'change_type' => $changeType,
                     'earned_points_at_change' => (int) ($entry['earnedPoints'] ?? 0),
                 ]);
             }

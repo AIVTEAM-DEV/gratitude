@@ -6,14 +6,14 @@ use App\Models\Gratitude\BonusPoint;
 use App\Models\Gratitude\Cancellation;
 use App\Models\Gratitude\EarnedPoint;
 use App\Models\Gratitude\Gratitude;
-use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class CancellationService
 {
+    public function __construct(protected PointLedgerService $pointLedgerService) {}
+
     public function cancel(Gratitude $gratitude, array $data, ?int $earnedPointId = null, ?int $bonusPointId = null): Cancellation
     {
         return DB::transaction(function () use ($gratitude, $data, $earnedPointId, $bonusPointId) {
@@ -39,7 +39,7 @@ class CancellationService
                     ? EarnedPoint::where('gratitudeNumber', $gratitude->gratitudeNumber)->lockForUpdate()->findOrFail($earnedPointId)
                     : BonusPoint::where('gratitudeNumber', $gratitude->gratitudeNumber)->lockForUpdate()->findOrFail($bonusPointId);
 
-                $available = $this->remainingPoints($source);
+                $available = $this->pointLedgerService->remainingPoints($source);
 
                 if ($pointsToCancel > $available) {
                     throw ValidationException::withMessages([
@@ -105,12 +105,12 @@ class CancellationService
         $remaining = $pointsToCancel;
         $allocations = [];
 
-        foreach ($this->buildCancellationQueue($gratitudeNumber) as $source) {
+        foreach ($this->pointLedgerService->redeemableQueue($gratitudeNumber) as $source) {
             if ($remaining <= 0) {
                 break;
             }
 
-            $available = $this->remainingPoints($source);
+            $available = $this->pointLedgerService->remainingPoints($source);
             if ($available <= 0) {
                 continue;
             }
@@ -129,55 +129,11 @@ class CancellationService
         return $allocations;
     }
 
-    private function buildCancellationQueue(string $gratitudeNumber): Collection
-    {
-        $now = Carbon::now();
-
-        $applyFilters = function ($query) use ($gratitudeNumber, $now) {
-            return $query
-                ->where('gratitudeNumber', $gratitudeNumber)
-                ->activeStatus()
-                ->whereNull('cancel_id')
-                ->where(function ($q) use ($now) {
-                    $q->whereNull('expires_at')->orWhere('expires_at', '>', $now);
-                })
-                ->where(function ($q) use ($now) {
-                    $q->whereNull('usable_date')->orWhere('usable_date', '<=', $now);
-                })
-                ->whereRaw('COALESCE(points, 0) > COALESCE(redeemed_points, 0) + COALESCE(cancelled_points, 0)')
-                ->lockForUpdate();
-        };
-
-        return $applyFilters(EarnedPoint::query())->get()
-            ->concat($applyFilters(BonusPoint::query())->get())
-            ->sort(function ($left, $right) {
-                $leftExpiry = $left->expires_at ? Carbon::parse($left->expires_at)->timestamp : PHP_INT_MAX;
-                $rightExpiry = $right->expires_at ? Carbon::parse($right->expires_at)->timestamp : PHP_INT_MAX;
-                if ($leftExpiry !== $rightExpiry) {
-                    return $leftExpiry <=> $rightExpiry;
-                }
-
-                $leftDate = Carbon::parse($left->usable_date ?? $left->date ?? $left->created_at)->timestamp;
-                $rightDate = Carbon::parse($right->usable_date ?? $right->date ?? $right->created_at)->timestamp;
-                if ($leftDate !== $rightDate) {
-                    return $leftDate <=> $rightDate;
-                }
-
-                $leftType = $left instanceof BonusPoint ? 2 : 1;
-                $rightType = $right instanceof BonusPoint ? 2 : 1;
-
-                return $leftType === $rightType
-                    ? ((int) $left->id) <=> ((int) $right->id)
-                    : $leftType <=> $rightType;
-            })
-            ->values();
-    }
-
     private function applyCancellationToSource(Model $source, int $points, Cancellation $cancel): array
     {
         $source->cancelled_points = (int) $source->cancelled_points + $points;
 
-        if ($this->remainingPoints($source) <= 0) {
+        if ($this->pointLedgerService->remainingPoints($source) <= 0) {
             $source->cancel_id = $cancel->id;
         }
 
@@ -187,16 +143,8 @@ class CancellationService
             'source_type' => get_class($source),
             'source_id' => $source->id,
             'points' => $points,
-            'remaining_after' => $this->remainingPoints($source),
+            'remaining_after' => $this->pointLedgerService->remainingPoints($source),
         ];
-    }
-
-    private function remainingPoints(Model $source): int
-    {
-        return max(
-            0,
-            (int) $source->points - (int) $source->redeemed_points - (int) $source->cancelled_points
-        );
     }
 
     private function findSource(?string $sourceType, mixed $sourceId): ?Model

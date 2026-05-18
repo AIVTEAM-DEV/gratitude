@@ -28,12 +28,17 @@ return new class extends Migration
             $table->string('category')->nullable();
             $table->json('project_data')->nullable();
             $table->bigInteger('cancel_id')->nullable();
-            $table->string('status')->nullable()->default('pending');
+            $table->boolean('status')->default(true);
             $table->timestamp('usable_date')->nullable();
             $table->timestamp('expires_at')->nullable();
             $table->boolean('expires_at_manual')->default(false);
             $table->softDeletes();
             $table->timestamps();
+
+            $table->index(['gratitudeNumber', 'status']);
+            $table->index(['gratitudeNumber', 'usable_date']);
+            $table->index(['gratitudeNumber', 'expires_at']);
+            $table->index(['gratitudeNumber', 'journey_id']);
         });
     }
 

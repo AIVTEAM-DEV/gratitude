@@ -28,12 +28,16 @@ return new class extends Migration
             $table->string('amount')->nullable();
             $table->string('description')->nullable();
             $table->bigInteger('cancel_id')->nullable();
-            $table->boolean('status')->nullable()->default(true);
+            $table->boolean('status')->default(true);
             $table->softDeletes();
             $table->timestamps();
             $table->timestamp('usable_date')->nullable();
             $table->timestamp('expires_at')->nullable();
             $table->boolean('expires_at_manual')->default(false);
+
+            $table->index(['gratitudeNumber', 'status']);
+            $table->index(['gratitudeNumber', 'usable_date']);
+            $table->index(['gratitudeNumber', 'expires_at']);
         });
     }
 

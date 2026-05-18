@@ -2,11 +2,13 @@
 import { Head, Link } from '@inertiajs/vue3';
 import AppLayout from '@/layouts/app/AppSidebarLayout.vue';
 import type { BreadcrumbItem } from '@/types';
-import { ref, onMounted } from 'vue';
+import { computed, ref, onMounted, watch } from 'vue';
 import axios from 'axios';
-import { Upload, RefreshCw } from 'lucide-vue-next';
+import { FileDown, FileText, Printer, RotateCcw, Search, Upload, RefreshCw } from 'lucide-vue-next';
 import DataTable from '@/components/DataTable.vue';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { route } from 'ziggy-js';
 
 const breadcrumbs: BreadcrumbItem[] = [
@@ -35,11 +37,25 @@ const columns = [
 const gratitudePoints = ref<any[]>([]);
 const loading = ref(true);
 const importing = ref(false);
+const filterOptions = ref<{ levels: any[] }>({ levels: [] });
+const filters = ref({
+    status: '',
+    usable_points: '',
+    level: '',
+    search: '',
+});
+let filterTimer: ReturnType<typeof setTimeout> | null = null;
+
+const cleanedFilters = computed(() => Object.fromEntries(
+    Object.entries(filters.value).filter(([, value]) => value !== null && value !== undefined && value !== ''),
+));
 
 const fetchAccountsData = async () => {
+    loading.value = true;
     try {
-        const response = await axios.get('/internal-api/gratitude');
+        const response = await axios.get('/internal-api/gratitude', { params: cleanedFilters.value });
         gratitudePoints.value = response.data.points || [];
+        filterOptions.value = response.data.filter_options || filterOptions.value;
     } catch (error) {
         console.error("Failed to load gratitude accounts", error);
     } finally {
@@ -50,6 +66,43 @@ const fetchAccountsData = async () => {
 onMounted(() => {
     fetchAccountsData();
 });
+
+watch(filters, () => {
+    if (filterTimer) clearTimeout(filterTimer);
+    filterTimer = setTimeout(() => fetchAccountsData(), 250);
+}, { deep: true });
+
+const resetFilters = () => {
+    filters.value = {
+        status: '',
+        usable_points: '',
+        level: '',
+        search: '',
+    };
+};
+
+type ExportFormat = 'pdf' | 'excel' | 'print';
+
+const accountExportUrl = (format: ExportFormat) => {
+    const url = new URL(`/internal-api/gratitude/accounts/export/${format}`, window.location.origin);
+
+    Object.entries(cleanedFilters.value).forEach(([key, value]) => {
+        url.searchParams.set(key, String(value));
+    });
+
+    return url.toString();
+};
+
+const exportAccounts = (format: ExportFormat) => {
+    const url = accountExportUrl(format);
+
+    if (format === 'excel') {
+        window.location.href = url;
+        return;
+    }
+
+    window.open(url, '_blank', format === 'print' ? 'width=1200,height=800' : undefined);
+};
 
 const handleApiImport = async () => {
     if (!window.confirm('Are you sure you want to pull the latest data from the API?')) return;
@@ -117,6 +170,7 @@ const getAccountRoute = (gratitudeNumber: any): string => {
 };
 
 const syncingRows = ref<Set<string>>(new Set());
+const recalculatingRows = ref<Set<string>>(new Set());
 const syncBalance = async (gratitudeNumber: string) => {
     syncingRows.value = new Set([...syncingRows.value, gratitudeNumber]);
     try {
@@ -128,6 +182,20 @@ const syncBalance = async (gratitudeNumber: string) => {
         const next = new Set(syncingRows.value);
         next.delete(gratitudeNumber);
         syncingRows.value = next;
+    }
+};
+
+const recalculateLevel = async (gratitudeNumber: string) => {
+    recalculatingRows.value = new Set([...recalculatingRows.value, gratitudeNumber]);
+    try {
+        await axios.post(`/internal-api/gratitude/${gratitudeNumber}/recalculate-level`);
+        await fetchAccountsData();
+    } catch (error) {
+        console.error('Failed to recalculate level', error);
+    } finally {
+        const next = new Set(recalculatingRows.value);
+        next.delete(gratitudeNumber);
+        recalculatingRows.value = next;
     }
 };
 </script>
@@ -142,7 +210,19 @@ const syncBalance = async (gratitudeNumber: string) => {
                     <h1 class="text-3xl font-bold tracking-tight text-foreground">Gratitude Accounts</h1>
                     <p class="mt-2 text-sm text-muted-foreground">Manage user gratitudes and point balances.</p>
                 </div>
-                <div class="flex space-x-3">
+                <div class="flex flex-wrap justify-end gap-2">
+                    <Button variant="outline" @click="exportAccounts('pdf')">
+                        <FileText class="mr-2 h-4 w-4" />
+                        PDF
+                    </Button>
+                    <Button variant="outline" @click="exportAccounts('excel')">
+                        <FileDown class="mr-2 h-4 w-4" />
+                        Excel
+                    </Button>
+                    <Button variant="outline" @click="exportAccounts('print')">
+                        <Printer class="mr-2 h-4 w-4" />
+                        Print
+                    </Button>
                     <Button variant="default" @click="handleApiImport" :disabled="importing">
                         <Upload class="mr-2 h-4 w-4" />
                         {{ importing ? 'Importing from API...' : 'Import Data from API' }}
@@ -150,14 +230,57 @@ const syncBalance = async (gratitudeNumber: string) => {
                 </div>
             </div>
 
+            <div class="mt-6 grid gap-3 border-y border-border/70 py-4 md:grid-cols-[1.5fr_1fr_1fr_1fr_auto]">
+                <div>
+                    <Label for="account-search" class="text-xs font-semibold uppercase text-muted-foreground">Gratitude Number</Label>
+                    <div class="relative mt-1">
+                        <Input id="account-search" v-model="filters.search" type="search" placeholder="Search Gratitude number" class="pl-9" />
+                        <Search class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    </div>
+                </div>
+                <div>
+                    <Label for="status-filter" class="text-xs font-semibold uppercase text-muted-foreground">Status</Label>
+                    <select id="status-filter" v-model="filters.status" class="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
+                        <option value="">All statuses</option>
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                    </select>
+                </div>
+                <div>
+                    <Label for="usable-filter" class="text-xs font-semibold uppercase text-muted-foreground">Usable Points</Label>
+                    <select id="usable-filter" v-model="filters.usable_points" class="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
+                        <option value="">Any balance</option>
+                        <option value="with">With usable points</option>
+                        <option value="without">No usable points</option>
+                    </select>
+                </div>
+                <div>
+                    <Label for="level-filter" class="text-xs font-semibold uppercase text-muted-foreground">Level</Label>
+                    <select id="level-filter" v-model="filters.level" class="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
+                        <option value="">All levels</option>
+                        <option v-for="level in filterOptions.levels" :key="level.id || level.name" :value="level.name">
+                            {{ level.name }}
+                        </option>
+                    </select>
+                </div>
+                <div class="flex items-end">
+                    <Button variant="outline" class="w-full" @click="resetFilters">
+                        <RotateCcw class="mr-2 h-4 w-4" />
+                        Reset
+                    </Button>
+                </div>
+            </div>
+
             <!-- Gratitudes Table -->
-            <div class="bg-card rounded-xl border border-border shadow-sm p-3">
+            <div class="mt-6 bg-card rounded-xl border border-border shadow-sm p-3">
                 <DataTable
                     title="Gratitude Accounts"
                     :columns="columns"
                     :rows="gratitudePoints"
                     :busy="loading"
                     :row-class="accountRowClass"
+                    :show-search="false"
+                    :show-exports="false"
                 >
                     <template #cell-level="{ row }">
                         <div class="flex items-center gap-2">
@@ -206,6 +329,15 @@ const syncBalance = async (gratitudeNumber: string) => {
                                 title="Sync balance"
                             >
                                 <RefreshCw class="w-3.5 h-3.5" :class="{ 'animate-spin': syncingRows.has((row as any).gratitudeNumber) }" />
+                            </Button>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                :disabled="recalculatingRows.has((row as any).gratitudeNumber)"
+                                @click="recalculateLevel((row as any).gratitudeNumber)"
+                                title="Recalculate level"
+                            >
+                                <RotateCcw class="w-3.5 h-3.5" :class="{ 'animate-spin': recalculatingRows.has((row as any).gratitudeNumber) }" />
                             </Button>
                             <Link :href="getAccountRoute((row as any).gratitudeNumber)">
                                 <Button variant="ghost" size="sm">View</Button>
