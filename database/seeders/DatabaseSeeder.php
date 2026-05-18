@@ -57,7 +57,7 @@ class DatabaseSeeder extends Seeder
                 'first_name' => 'IT',
                 'last_name' => 'AIv',
                 'name' => 'IT AIv',
-                'password' => \Illuminate\Support\Facades\Hash::make('qwertyuiop'),
+                'password' => \Illuminate\Support\Facades\Hash::make('qwertyuiop@2026gratitude'),
                 'status' => 'active',
             ]
         );
