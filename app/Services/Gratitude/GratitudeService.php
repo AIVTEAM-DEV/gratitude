@@ -63,6 +63,7 @@ class GratitudeService
                 'importStatus' => $data['importStatus'] ?? false,
                 'expires_at' => ! empty($data['expires_at']) ? Carbon::parse($data['expires_at']) : null,
                 'last_activity_at' => Carbon::now(),
+                'guests_data' => Gratitude::extractGuestsData($data),
             ]);
         });
     }
@@ -93,25 +94,32 @@ class GratitudeService
     {
         foreach ($data as $record) {
             $hasPointData = $this->hasImportedPointDatasets($record);
+            $guestsData = Gratitude::extractGuestsData($record);
+
+            $gratitudeValues = [
+                'gratitudeNumber' => $record['gratitudeNumber'] ?? null,
+                'totalPoints' => $record['totalPoints'] ?? 0,
+                'useablePoints' => $record['useablePoints'] ?? 0,
+                'level' => $record['level'] ?? 'Explorer',
+                'status' => $this->normalizeAccountStatus($record['status'] ?? 'active'),
+                'statusChange' => $record['statusChange'] ?? null,
+                'importStatus' => $record['importStatus'] ?? 1,
+                'is_active' => $this->normalizeAccountStatus($record['status'] ?? 'active') === 'active',
+                'level_obtained_at' => ! empty($record['level_obtained_at'])
+                    ? Carbon::parse($record['level_obtained_at'])
+                    : (! empty($record['created_at']) ? Carbon::parse($record['created_at']) : null),
+                'expires_at' => ! empty($record['expires_at']) ? Carbon::parse($record['expires_at']) : null,
+                'created_at' => ! empty($record['created_at']) ? Carbon::parse($record['created_at']) : null,
+                'updated_at' => ! empty($record['updated_at']) ? Carbon::parse($record['updated_at']) : null,
+            ];
+
+            if ($guestsData !== [] || $this->recordHasGuestPayload($record)) {
+                $gratitudeValues['guests_data'] = $guestsData;
+            }
 
             $gratitude = Gratitude::updateOrCreate(
                 ['old_id' => $record['id']],
-                [
-                    'gratitudeNumber' => $record['gratitudeNumber'] ?? null,
-                    'totalPoints' => $record['totalPoints'] ?? 0,
-                    'useablePoints' => $record['useablePoints'] ?? 0,
-                    'level' => $record['level'] ?? 'Explorer',
-                    'status' => $this->normalizeAccountStatus($record['status'] ?? 'active'),
-                    'statusChange' => $record['statusChange'] ?? null,
-                    'importStatus' => $record['importStatus'] ?? 1,
-                    'is_active' => $this->normalizeAccountStatus($record['status'] ?? 'active') === 'active',
-                    'level_obtained_at' => ! empty($record['level_obtained_at'])
-                        ? Carbon::parse($record['level_obtained_at'])
-                        : (! empty($record['created_at']) ? Carbon::parse($record['created_at']) : null),
-                    'expires_at' => ! empty($record['expires_at']) ? Carbon::parse($record['expires_at']) : null,
-                    'created_at' => ! empty($record['created_at']) ? Carbon::parse($record['created_at']) : null,
-                    'updated_at' => ! empty($record['updated_at']) ? Carbon::parse($record['updated_at']) : null,
-                ]
+                $gratitudeValues
             );
 
             $level = $this->pointExpiryService->resolveLevelForGratitude($gratitude);
@@ -337,6 +345,30 @@ class GratitudeService
     {
         foreach (['cancellationPoints', 'earnedPoints', 'bonusPoints', 'redeemPoints'] as $key) {
             if (array_key_exists($key, $record) && is_array($record[$key])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function recordHasGuestPayload(array $record): bool
+    {
+        foreach ([
+            'guests_data',
+            'guests',
+            'members',
+            'primary_guest',
+            'primaryGuest',
+            'lead_guest',
+            'leadGuest',
+            'secondary_guests',
+            'secondaryGuests',
+            'additional_guests',
+            'additionalGuests',
+            'companions',
+        ] as $key) {
+            if (array_key_exists($key, $record)) {
                 return true;
             }
         }

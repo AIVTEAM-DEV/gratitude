@@ -158,7 +158,8 @@ class GratitudeController extends Controller
                 continue;
             }
 
-            $detailRecord = $this->normalizeRemoteGratitudeDetail($response->json(), $summaryRecord);
+            $payload = $response->json();
+            $detailRecord = $this->normalizeRemoteGratitudeDetail($payload, $summaryRecord);
 
             if ($detailRecord === null) {
                 $failures[] = [
@@ -169,10 +170,37 @@ class GratitudeController extends Controller
                 continue;
             }
 
+            $guestData = $this->fetchRemoteGuestData($baseUrl, $gratitudeNumber);
+
+            if ($guestData !== null) {
+                $detailRecord['guests_data'] = $guestData;
+            } else {
+                $guestData = Gratitude::extractGuestsData($payload);
+
+                if ($guestData !== []) {
+                    $detailRecord['guests_data'] = $guestData;
+                }
+            }
+
             $detailedRecords[$gratitudeNumber] = $detailRecord;
         }
 
         return [$detailedRecords, $failures];
+    }
+
+    private function fetchRemoteGuestData(string $baseUrl, string $gratitudeNumber): ?array
+    {
+        try {
+            $response = $this->aivteamHttp()
+                ->timeout(60)
+                ->get($baseUrl.'/api/gratitude/get/gratitude-by-number/'.rawurlencode($gratitudeNumber));
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return $response->successful()
+            ? Gratitude::extractGuestsData($response->json())
+            : null;
     }
 
     private function normalizeRemoteGratitudeDetail(mixed $payload, array $summaryRecord): ?array

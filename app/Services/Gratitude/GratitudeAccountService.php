@@ -12,6 +12,8 @@ use Illuminate\Support\Collection;
 
 class GratitudeAccountService
 {
+    private const EXPORT_TITLE = 'Gratitude - Art In Voyage';
+
     public function accounts(array $filters = []): Collection
     {
         $accounts = $this->query($filters)->get();
@@ -23,6 +25,7 @@ class GratitudeAccountService
             $level = $levels->get($gratitude->level);
             $gratitude->setAttribute('level_icon_url', $level?->level_icon_url);
             $gratitude->setAttribute('level_image_url', $level?->level_image_url);
+            $gratitude->setAttribute('redemption_points_per_dollar', (float) ($level?->redemption_points_per_dollar ?: 35));
 
             return $gratitude;
         });
@@ -37,6 +40,7 @@ class GratitudeAccountService
             ->select(
                 'id',
                 'gratitudeNumber',
+                'guests_data',
                 'level',
                 'level_obtained_at',
                 'totalPoints',
@@ -118,8 +122,8 @@ class GratitudeAccountService
 
     public function excelResponse(array $filters = []): Response
     {
-        $rows = $this->exportRows($filters);
-        $html = $this->tableHtml($rows, 'Gratitude Accounts', $this->filterSummary($filters));
+        $groups = $this->exportGroups($filters);
+        $html = $this->tableHtml($groups, self::EXPORT_TITLE);
 
         return response($html, 200, [
             'Content-Type' => 'application/vnd.ms-excel; charset=UTF-8',
@@ -129,9 +133,9 @@ class GratitudeAccountService
 
     public function printResponse(array $filters = []): Response
     {
-        $rows = $this->exportRows($filters);
+        $groups = $this->exportGroups($filters);
         $html = '<!doctype html><html><head><meta charset="utf-8"><title>Gratitude Accounts</title>'.$this->printStyles().'</head><body>'
-            .$this->tableHtml($rows, 'Gratitude Accounts', $this->filterSummary($filters))
+            .$this->tableHtml($groups, self::EXPORT_TITLE)
             .'<script>window.addEventListener("load",()=>window.print());</script></body></html>';
 
         return response($html);
@@ -139,8 +143,8 @@ class GratitudeAccountService
 
     public function pdfResponse(array $filters = []): Response
     {
-        $rows = $this->exportRows($filters);
-        $pdf = $this->makePdf($rows, $filters);
+        $groups = $this->exportGroups($filters);
+        $pdf = $this->makePdf($groups, $filters);
 
         return response($pdf, 200, [
             'Content-Type' => 'application/pdf',
@@ -148,23 +152,50 @@ class GratitudeAccountService
         ]);
     }
 
-    private function exportRows(array $filters): Collection
+    private function exportGroups(array $filters): Collection
     {
-        return $this->accounts($filters)
-            ->map(fn (Gratitude $account) => [
-                'ID' => $account->id,
-                'Gratitude Number' => $account->gratitudeNumber,
-                'Level' => $account->level ?: '',
-                'Status' => $this->accountStatus($account),
-                'Total Points' => (int) $account->totalPoints,
-                'Remaining Points' => (int) $account->totalRemainingPoints,
-                'Usable Points' => (int) $account->useablePoints,
-                'Pending Points' => (int) $account->pending_points,
-                'Redeemed Points' => (int) $account->totalRedeemedPoints,
-                'Cancelled Points' => (int) $account->totalCancelledPoints,
-                'Expired Points' => (int) $account->totalExpiredPoints,
-                'Last Activity' => $account->last_activity_at ? Carbon::parse($account->last_activity_at)->toDateString() : '',
-            ]);
+        $accounts = $this->accounts($filters);
+
+        return $accounts
+            ->map(function (Gratitude $account) {
+                $remainingPoints = (int) ($account->totalRemainingPoints ?? 0);
+                $useablePoints = (int) ($account->useablePoints ?? 0);
+                $pointsPerDollar = max(1, (float) ($account->getAttribute('redemption_points_per_dollar') ?: 35));
+
+                $guests = collect(Gratitude::normalizeGuestsData($account->guests_data ?? []))
+                    ->filter(fn ($guest) => is_array($guest))
+                    ->map(fn (array $guest) => [
+                        'Ownership' => $this->guestOwnership($guest),
+                        'Guests First Name' => $this->guestFirstName($guest),
+                        'Guests Last Name' => $this->guestLastName($guest),
+                        'Guests Preferred Name' => $this->guestPreferredName($guest),
+                        'Guests Date of Birth' => $this->guestDateOfBirth($guest),
+                        'Guests Email' => $this->guestEmail($guest),
+                    ])
+                    ->values();
+
+                if ($guests->isEmpty()) {
+                    $guests = collect([[
+                        'Guests First Name' => 'No guests found',
+                        'Guests Last Name' => '',
+                        'Guests Preferred Name' => '',
+                        'Guests Date of Birth' => '',
+                        'Guests Email' => '',
+                    ]]);
+                }
+
+                return [
+                    'account' => [
+                        'Gratitude Number' => $account->gratitudeNumber,
+                        'Level' => $account->level ?: '',
+                        'Remaining Points' => $remainingPoints,
+                        'Useable Points' => $useablePoints,
+                        '$ Value' => round($useablePoints / $pointsPerDollar, 2),
+                        'Status' => ucfirst($this->accountStatus($account)),
+                    ],
+                    'guests' => $guests,
+                ];
+            });
     }
 
     private function normalizeFilters(array $input): array
@@ -191,6 +222,134 @@ class GratitudeAccountService
         }
 
         return 'inactive';
+    }
+
+    private function guestFirstName(array $guest): string
+    {
+        $firstName = $this->firstGuestValue($guest, ['first_name', 'firstName', 'firstname', 'given_name', 'givenName']);
+
+        if ($firstName !== null) {
+            return (string) $firstName;
+        }
+
+        return $this->splitGuestName($guest)[0] ?? '';
+    }
+
+    private function guestOwnership(array $guest): string
+    {
+        $ownership = $this->firstGuestValue($guest, [
+            'ownership',
+            'onwership',
+            'gratitude_ownership',
+            'gratitudeOwnership',
+            'role',
+            'type',
+            'guest_type',
+            'guestType',
+        ]);
+
+        return $ownership !== null ? ucfirst((string) $ownership) : '';
+    }
+
+    private function guestLastName(array $guest): string
+    {
+        $lastName = $this->firstGuestValue($guest, ['last_name', 'lastName', 'lastname', 'surname', 'family_name', 'familyName']);
+
+        if ($lastName !== null) {
+            return (string) $lastName;
+        }
+
+        return $this->splitGuestName($guest)[1] ?? '';
+    }
+
+    private function guestPreferredName(array $guest): string
+    {
+        $preferredName = $this->firstGuestValue($guest, ['preferred_name', 'preferredName', 'nickname', 'known_as', 'knownAs']);
+
+        return $preferredName !== null ? (string) $preferredName : '';
+    }
+
+    private function guestDateOfBirth(array $guest): string
+    {
+        $dateOfBirth = $this->firstGuestValue($guest, [
+            'birthday',
+            'birtday',
+            'date_of_birth',
+            'dateOfBirth',
+            'birth_date',
+            'birthDate',
+            'dob',
+        ]);
+
+        if ($dateOfBirth === null) {
+            return '';
+        }
+
+        try {
+            return Carbon::parse($dateOfBirth)->format('F d, Y');
+        } catch (\Throwable) {
+            return (string) $dateOfBirth;
+        }
+    }
+
+    private function guestEmail(array $guest): string
+    {
+        $email = $this->firstGuestValue($guest, [
+            'email',
+            'email_address',
+            'emailAddress',
+            'guest_email',
+            'guestEmail',
+            'contact_email',
+            'contactEmail',
+            'user.email',
+            'profile.email',
+            'contact.email',
+        ]);
+
+        return $email !== null ? (string) $email : '';
+    }
+
+    private function splitGuestName(array $guest): array
+    {
+        $name = $this->firstGuestValue($guest, [
+            'name',
+            'full_name',
+            'fullName',
+            'guest_name',
+            'guestName',
+            'display_name',
+            'displayName',
+        ]);
+
+        if ($name === null) {
+            return [];
+        }
+
+        $parts = preg_split('/\s+/', trim((string) $name), 2);
+
+        return $parts ?: [];
+    }
+
+    private function firstGuestValue(array $guest, array $keys): mixed
+    {
+        foreach ($keys as $key) {
+            $value = data_get($guest, $key);
+
+            if ($value === null) {
+                continue;
+            }
+
+            if (is_bool($value)) {
+                return $value;
+            }
+
+            if (is_scalar($value) && trim((string) $value) !== '') {
+                return $value;
+            }
+        }
+
+        return null;
     }
 
     private function filterSummary(array $filters): array
@@ -220,34 +379,56 @@ class GratitudeAccountService
         return $summary;
     }
 
-    private function tableHtml(Collection $rows, string $title, array $summary): string
+    private function exportColumns(): array
     {
-        $columns = array_keys($rows->first() ?? [
-            'ID' => null,
-            'Gratitude Number' => null,
-            'Level' => null,
-            'Status' => null,
-            'Usable Points' => null,
-        ]);
+        return [
+            'Gratitude Number',
+            'Level',
+            'Ownership',
+            'Guests First Name',
+            'Guests Last Name',
+            'Guests Preferred Name',
+            'Guests Date of Birth',
+            'Guests Email',
+            'Remaining Points',
+            'Useable Points',
+            '$ Value',
+            'Status',
+        ];
+    }
+
+    private function tableHtml(Collection $groups, string $title): string
+    {
+        $columns = $this->exportColumns();
 
         $head = collect($columns)
             ->map(fn ($column) => '<th>'.e($column).'</th>')
             ->implode('');
 
-        $body = $rows->map(function (array $row) use ($columns) {
-            $cells = collect($columns)
-                ->map(fn ($column) => '<td>'.nl2br(e((string) ($row[$column] ?? ''))).'</td>')
-                ->implode('');
+        $body = $groups->isEmpty()
+            ? '<tr><td colspan="'.count($columns).'">No records found.</td></tr>'
+            : $groups->map(function (array $group) use ($columns) {
+                $guests = collect($group['guests'] ?? [])->values();
+                $rowspan = max(1, $guests->count());
 
-            return '<tr>'.$cells.'</tr>';
-        })->implode('');
+                return $guests->map(function (array $guest, int $index) use ($columns, $group, $rowspan) {
+                    $cells = '';
 
-        $summaryHtml = $summary
-            ? '<p class="filters">'.e(implode(' | ', $summary)).'</p>'
-            : '<p class="filters">No filters applied</p>';
+                    if ($index === 0) {
+                        $cells .= '<td rowspan="'.$rowspan.'" style="vertical-align: middle; text-align: center;">'.nl2br(e((string) data_get($group, 'account.Gratitude Number', ''))).'</td>';
+                    }
 
-        return '<main><h1>'.e($title).'</h1><p class="meta">Generated '.e(Carbon::now()->toDateTimeString()).'</p>'.$summaryHtml
-            .'<table><thead><tr>'.$head.'</tr></thead><tbody>'.$body.'</tbody></table></main>';
+                    foreach (array_slice($columns, 1) as $column) {
+                        $value = $guest[$column] ?? data_get($group, 'account.'.$column, '');
+
+                        $cells .= '<td>'.nl2br(e($this->formatExportValue($value, $column))).'</td>';
+                    }
+
+                    return '<tr>'.$cells.'</tr>';
+                })->implode('');
+            })->implode('');
+
+        return '<main><table><thead><tr><th colspan="'.count($columns).'" style="text-align: center;">'.e($title).'</th></tr><tr>'.$head.'</tr></thead><tbody>'.$body.'</tbody></table></main>';
     }
 
     private function printStyles(): string
@@ -255,18 +436,25 @@ class GratitudeAccountService
         return '<style>
             @page { margin: 14mm; }
             body { color: #111827; font-family: Arial, sans-serif; font-size: 12px; }
-            h1 { font-size: 20px; margin: 0 0 4px; }
-            .meta, .filters { color: #4b5563; margin: 0 0 10px; }
             table { border-collapse: collapse; width: 100%; }
-            th, td { border: 1px solid #d1d5db; padding: 6px 8px; text-align: left; }
+            th, td { border: 1px solid #d1d5db; padding: 6px 8px; text-align: left; vertical-align: top; }
             th { background: #f3f4f6; font-weight: 700; }
             tr { page-break-inside: avoid; }
         </style>';
     }
 
-    private function makePdf(Collection $rows, array $filters): string
+    private function formatExportValue(mixed $value, string $column): string
     {
-        $pages = $this->pdfTablePages($rows, $filters);
+        if (in_array($column, ['Remaining Points', 'Useable Points', '$ Value'], true)) {
+            return number_format((float) $value, 2, ',', ' ');
+        }
+
+        return (string) $value;
+    }
+
+    private function makePdf(Collection $groups, array $filters): string
+    {
+        $pages = $this->pdfTablePages($groups, $filters);
         $objects = [
             1 => '<< /Type /Catalog /Pages 2 0 R >>',
             3 => '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
@@ -289,30 +477,96 @@ class GratitudeAccountService
         return $this->buildPdfDocument($objects);
     }
 
-    private function pdfTablePages(Collection $rows, array $filters): array
+    private function pdfTablePages(Collection $groups, array $filters): array
     {
         $columns = $this->pdfColumns();
         $pages = [];
         [$content, $y] = $this->pdfStartPage($filters, $columns);
 
-        if ($rows->isEmpty()) {
+        if ($groups->isEmpty()) {
             $content .= $this->pdfDrawRow(['Gratitude Number' => ['No records found.']], $columns, $y, 22);
             $pages[] = $content;
 
             return $pages;
         }
 
-        foreach ($rows as $row) {
-            $prepared = $this->preparePdfRow($row, $columns);
-            $rowHeight = $this->pdfRowHeight($prepared);
+        foreach ($groups as $group) {
+            $accountCell = $this->wrapPdfCell(
+                (string) data_get($group, 'account.Gratitude Number', ''),
+                (float) $columns[0]['width']
+            );
+            $accountCellHeight = $this->pdfRowHeight(['Gratitude Number' => $accountCell]);
+            $rows = collect(data_get($group, 'guests', []))
+                ->map(fn (array $guest) => $this->preparePdfGuestRow(data_get($group, 'account', []), $guest, $columns))
+                ->values()
+                ->all();
+            $rowHeights = array_map(fn (array $row) => $this->pdfRowHeight($row), $rows);
+            $offset = 0;
 
-            if ($y - $rowHeight < 26) {
-                $pages[] = $content;
-                [$content, $y] = $this->pdfStartPage($filters, $columns);
+            while ($offset < count($rows)) {
+                if ($y - 22 < 26) {
+                    $pages[] = $content;
+                    [$content, $y] = $this->pdfStartPage($filters, $columns);
+                }
+
+                $availableHeight = $y - 26;
+                $nextRequiredHeight = max($rowHeights[$offset] ?? 22, $accountCellHeight);
+
+                if ($nextRequiredHeight > $availableHeight && $y < 490) {
+                    $pages[] = $content;
+                    [$content, $y] = $this->pdfStartPage($filters, $columns);
+
+                    continue;
+                }
+
+                $chunkRows = [];
+                $chunkHeights = [];
+                $chunkHeight = 0;
+
+                for ($index = $offset; $index < count($rows); $index++) {
+                    $rowHeight = $rowHeights[$index];
+
+                    if ($chunkRows !== [] && $chunkHeight + $rowHeight > $availableHeight) {
+                        break;
+                    }
+
+                    $chunkRows[] = $rows[$index];
+                    $chunkHeights[] = $rowHeight;
+                    $chunkHeight += $rowHeight;
+
+                    if ($chunkHeight >= $availableHeight) {
+                        break;
+                    }
+                }
+
+                if ($chunkRows === []) {
+                    $pages[] = $content;
+                    [$content, $y] = $this->pdfStartPage($filters, $columns);
+
+                    continue;
+                }
+
+                if ($chunkHeight < $accountCellHeight) {
+                    $chunkHeights[0] += $accountCellHeight - $chunkHeight;
+                    $chunkHeight = $accountCellHeight;
+                }
+
+                $chunkAccountCell = $offset === 0
+                    ? $accountCell
+                    : $this->wrapPdfCell(
+                        (string) data_get($group, 'account.Gratitude Number', '').' (cont.)',
+                        (float) $columns[0]['width']
+                    );
+
+                $content .= $this->pdfDrawGroupedRows($chunkAccountCell, $chunkRows, $columns, $y, $chunkHeights);
+                $y -= $chunkHeight;
+                $offset += count($chunkRows);
+
+                if ($offset < count($rows)) {
+                    $pages[] = $content;
+                    [$content, $y] = $this->pdfStartPage($filters, $columns);
+                }
             }
-
-            $content .= $this->pdfDrawRow($prepared, $columns, $y, $rowHeight);
-            $y -= $rowHeight;
         }
 
         $pages[] = $content;
@@ -323,43 +577,40 @@ class GratitudeAccountService
     private function pdfColumns(): array
     {
         return [
-            ['key' => 'Gratitude Number', 'label' => 'Gratitude #', 'width' => 92],
-            ['key' => 'Level', 'label' => 'Level', 'width' => 74],
-            ['key' => 'Status', 'label' => 'Status', 'width' => 54],
-            ['key' => 'Total Points', 'label' => 'Total', 'width' => 70],
-            ['key' => 'Remaining Points', 'label' => 'Remaining', 'width' => 78],
-            ['key' => 'Usable Points', 'label' => 'Usable', 'width' => 70],
-            ['key' => 'Pending Points', 'label' => 'Pending', 'width' => 70],
-            ['key' => 'Redeemed Points', 'label' => 'Redeemed', 'width' => 74],
-            ['key' => 'Cancelled Points', 'label' => 'Cancelled', 'width' => 76],
-            ['key' => 'Expired Points', 'label' => 'Expired', 'width' => 70],
-            ['key' => 'Last Activity', 'label' => 'Last Activity', 'width' => 86],
+            ['key' => 'Gratitude Number', 'label' => 'Gratitude Number', 'width' => 68],
+            ['key' => 'Level', 'label' => 'Level', 'width' => 48],
+            ['key' => 'Ownership', 'label' => 'Ownership', 'width' => 58],
+            ['key' => 'Guests First Name', 'label' => 'Guests First Name', 'width' => 68],
+            ['key' => 'Guests Last Name', 'label' => 'Guests Last Name', 'width' => 68],
+            ['key' => 'Guests Preferred Name', 'label' => 'Guests Preferred Name', 'width' => 76],
+            ['key' => 'Guests Date of Birth', 'label' => 'Guests Date of Birth', 'width' => 72],
+            ['key' => 'Guests Email', 'label' => 'Guests Email', 'width' => 110],
+            ['key' => 'Remaining Points', 'label' => 'Remaining Points', 'width' => 60],
+            ['key' => 'Useable Points', 'label' => 'Useable Points', 'width' => 60],
+            ['key' => '$ Value', 'label' => '$ Value', 'width' => 46],
+            ['key' => 'Status', 'label' => 'Status', 'width' => 40],
         ];
     }
 
     private function pdfStartPage(array $filters, array $columns): array
     {
-        $summary = implode(' | ', $this->filterSummary($filters)) ?: 'No filters applied';
-        $content = $this->pdfTextAt('Gratitude Accounts', 24, 560, 14, 'F2');
-        $content .= $this->pdfTextAt('Generated '.Carbon::now()->toDateTimeString(), 24, 542, 8);
-        $content .= $this->pdfTextAt($summary, 24, 530, 8);
-        $content .= $this->pdfDrawHeaderRow($columns, 510);
+        $tableWidth = array_sum(array_column($columns, 'width'));
+        $content = $this->pdfCell(24, 570, (float) $tableWidth, 20);
+        $content .= $this->pdfCenteredTextAt(self::EXPORT_TITLE, 24, 557, (float) $tableWidth, 8, 'F2');
+        $content .= $this->pdfDrawHeaderRow($columns, 550);
 
-        return [$content, 490];
+        return [$content, 530];
     }
 
-    private function preparePdfRow(array $row, array $columns): array
+    private function preparePdfGuestRow(array $account, array $guest, array $columns): array
     {
         $prepared = [];
 
-        foreach ($columns as $column) {
-            $value = $row[$column['key']] ?? '';
+        foreach (array_slice($columns, 1) as $column) {
+            $key = $column['key'];
+            $value = $guest[$key] ?? $account[$key] ?? '';
 
-            if (is_int($value)) {
-                $value = number_format($value);
-            }
-
-            $prepared[$column['key']] = $this->wrapPdfCell((string) $value, (float) $column['width']);
+            $prepared[$key] = $this->wrapPdfCell($this->formatExportValue($value, $key), (float) $column['width']);
         }
 
         return $prepared;
@@ -393,10 +644,11 @@ class GratitudeAccountService
     {
         $content = '';
         $x = 24;
+        $height = 20;
 
         foreach ($columns as $column) {
-            $content .= $this->pdfCell((float) $x, $topY, (float) $column['width'], 20, true);
-            $content .= $this->pdfTextAt($column['label'], $x + 4, $topY - 13, 7, 'F2');
+            $content .= $this->pdfCell((float) $x, $topY, (float) $column['width'], $height, true);
+            $content .= $this->pdfTextAt($column['label'], $x + 3, $topY - 12, 5, 'F2');
             $x += $column['width'];
         }
 
@@ -417,6 +669,42 @@ class GratitudeAccountService
             }
 
             $x += $column['width'];
+        }
+
+        return $content;
+    }
+
+    private function pdfDrawGroupedRows(array $accountCell, array $rows, array $columns, float $topY, array $rowHeights): string
+    {
+        $content = '';
+        $x = 24;
+        $totalHeight = array_sum($rowHeights);
+        $firstColumn = $columns[0];
+
+        $content .= $this->pdfCell((float) $x, $topY, (float) $firstColumn['width'], (float) $totalHeight);
+
+        foreach ($accountCell as $index => $line) {
+            $content .= $this->pdfTextAt($line, $x + 4, $topY - 12 - ($index * 9), 7);
+        }
+
+        $rowTopY = $topY;
+
+        foreach ($rows as $rowIndex => $row) {
+            $x = 24 + $firstColumn['width'];
+            $height = (float) $rowHeights[$rowIndex];
+
+            foreach (array_slice($columns, 1) as $column) {
+                $key = $column['key'];
+                $content .= $this->pdfCell((float) $x, $rowTopY, (float) $column['width'], $height);
+
+                foreach (($row[$key] ?? ['']) as $lineIndex => $line) {
+                    $content .= $this->pdfTextAt($line, $x + 4, $rowTopY - 12 - ($lineIndex * 9), 7);
+                }
+
+                $x += $column['width'];
+            }
+
+            $rowTopY -= $height;
         }
 
         return $content;
@@ -450,6 +738,14 @@ class GratitudeAccountService
         $pdf .= "trailer\n<< /Size ".(max(array_keys($objects)) + 1)." /Root 1 0 R >>\nstartxref\n{$xrefOffset}\n%%EOF";
 
         return $pdf;
+    }
+
+    private function pdfCenteredTextAt(string $text, float $x, float $y, float $width, int $size = 8, string $font = 'F1'): string
+    {
+        $textWidth = strlen($this->pdfText($text)) * $size * 0.5;
+        $textX = $x + max(0, ($width - $textWidth) / 2);
+
+        return $this->pdfTextAt($text, $textX, $y, $size, $font);
     }
 
     private function pdfTextAt(string $text, float $x, float $y, int $size = 8, string $font = 'F1'): string

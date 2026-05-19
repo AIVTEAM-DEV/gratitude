@@ -593,6 +593,21 @@ class GratitudeServiceTest extends TestCase
                     'redeemPoints' => [],
                 ],
             ]),
+            'https://aivteam.test/api/gratitude/get/gratitude-by-number/G0005' => Http::response([
+                'data' => [
+                    'guests' => [
+                        [
+                            'id' => 91,
+                            'first_name' => 'Ava',
+                            'last_name' => 'Primary',
+                            'preferred_name' => 'A',
+                            'date_of_birth' => '1991-11-09',
+                            'email' => 'ava@example.com',
+                            'gratitude_ownership' => 'primary',
+                        ],
+                    ],
+                ],
+            ]),
         ]);
 
         $response = $this->actingAs($this->user)->getJson('/internal-api/gratitude/migrate-data');
@@ -604,6 +619,7 @@ class GratitudeServiceTest extends TestCase
             ->assertJsonPath('detail_failures', 0);
 
         Http::assertSent(fn ($request) => $request->url() === 'https://aivteam.test/api/gratitude/get/gratitude-data-all/gratitude/G0005');
+        Http::assertSent(fn ($request) => $request->url() === 'https://aivteam.test/api/gratitude/get/gratitude-by-number/G0005');
 
         $this->assertDatabaseHas('earned_points', [
             'old_id' => 412,
@@ -616,6 +632,19 @@ class GratitudeServiceTest extends TestCase
             'gratitudeNumber' => 'G0005',
             'points' => 200,
         ]);
+
+        $gratitude = Gratitude::where('gratitudeNumber', 'G0005')->firstOrFail();
+        $this->assertSame([
+            [
+                'id' => 91,
+                'first_name' => 'Ava',
+                'last_name' => 'Primary',
+                'preferred_name' => 'A',
+                'email' => 'ava@example.com',
+                'birthday' => '1991-11-09',
+                'ownership' => 'primary',
+            ],
+        ], $gratitude->guests_data);
     }
 
     public function test_import_turns_legacy_negative_non_expiry_rows_into_cancellations()
