@@ -1,8 +1,11 @@
 <?php
 
+use App\Models\Gratitude\BonusPoint;
+use App\Models\Gratitude\EarnedPoint;
 use App\Models\Gratitude\Gratitude;
 use App\Models\Gratitude\GratitudeLevel;
 use App\Models\User;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\Http;
 
 function createGratitudeAccountExportFixture(string $gratitudeNumber): User
@@ -55,6 +58,22 @@ function createGratitudeAccountExportFixture(string $gratitudeNumber): User
         ],
     ]);
 
+    EarnedPoint::create([
+        'gratitudeNumber' => $gratitudeNumber,
+        'points' => 600,
+        'status' => true,
+        'usable_date' => Carbon::today(),
+        'expires_at' => Carbon::today()->addYear(),
+    ]);
+
+    BonusPoint::create([
+        'gratitudeNumber' => $gratitudeNumber,
+        'points' => 300,
+        'status' => true,
+        'usable_date' => Carbon::today(),
+        'expires_at' => Carbon::today()->addYear(),
+    ]);
+
     Http::fake();
 
     return $user;
@@ -82,7 +101,7 @@ test('gratitude account exports group multiple guests under one gratitude number
         ->toContain('Guests Preferred Name')
         ->toContain('Guests Date of Birth')
         ->toContain('Guests Email')
-        ->toContain('Remaining Points')
+        ->toContain('Total Balance')
         ->toContain('Useable Points')
         ->toContain('$ Value')
         ->toContain('Ava')
@@ -101,7 +120,6 @@ test('gratitude account exports group multiple guests under one gratitude number
         ->not->toContain('Guest Name')
         ->not->toContain('Guest Email')
         ->not->toContain('Primary Guest')
-        ->not->toContain('Total Balance')
         ->not->toContain('Total Points')
         ->not->toContain('Cancelled')
         ->not->toContain('Expired')
@@ -122,3 +140,105 @@ test('gratitude account exports group multiple guests under one gratitude number
 
     Http::assertNothingSent();
 })->with(['pdf', 'excel', 'print']);
+
+test('gratitude account filters can find points about to expire and expiry date ranges', function () {
+    Carbon::setTestNow(Carbon::parse('2026-05-20 12:00:00'));
+
+    try {
+        $user = User::factory()->create();
+
+        Gratitude::create([
+            'gratitudeNumber' => 'G-SOON',
+            'level' => 'Explorer',
+            'status' => 'active',
+            'is_active' => true,
+            'totalRemainingPoints' => 150,
+        ]);
+
+        Gratitude::create([
+            'gratitudeNumber' => 'G-LATER',
+            'level' => 'Explorer',
+            'status' => 'active',
+            'is_active' => true,
+            'totalRemainingPoints' => 250,
+        ]);
+
+        EarnedPoint::create([
+            'gratitudeNumber' => 'G-SOON',
+            'points' => 150,
+            'status' => true,
+            'usable_date' => Carbon::today(),
+            'expires_at' => Carbon::today()->addDays(10),
+        ]);
+
+        BonusPoint::create([
+            'gratitudeNumber' => 'G-LATER',
+            'points' => 250,
+            'status' => true,
+            'usable_date' => Carbon::today(),
+            'expires_at' => Carbon::today()->addDays(45),
+        ]);
+
+        $aboutToExpire = $this->actingAs($user)->getJson('/internal-api/gratitude?expiry_status=about_to_expire');
+
+        $aboutToExpire
+            ->assertOk()
+            ->assertJsonCount(1, 'points')
+            ->assertJsonPath('points.0.gratitudeNumber', 'G-SOON')
+            ->assertJsonPath('points.0.total_balance', 150);
+
+        $dateRange = $this->actingAs($user)->getJson('/internal-api/gratitude?expires_from=2026-07-01&expires_to=2026-07-15');
+
+        $dateRange
+            ->assertOk()
+            ->assertJsonCount(1, 'points')
+            ->assertJsonPath('points.0.gratitudeNumber', 'G-LATER')
+            ->assertJsonPath('points.0.total_balance', 250);
+    } finally {
+        Carbon::setTestNow();
+    }
+});
+
+test('gratitude account total balance is the remaining points while pending points stay separate', function () {
+    Carbon::setTestNow(Carbon::parse('2026-05-20 12:00:00'));
+
+    try {
+        $user = User::factory()->create();
+
+        Gratitude::create([
+            'gratitudeNumber' => 'G-PENDING-BALANCE',
+            'level' => 'Explorer',
+            'status' => 'active',
+            'is_active' => true,
+            'totalRemainingPoints' => 350,
+            'useablePoints' => 100,
+        ]);
+
+        EarnedPoint::create([
+            'gratitudeNumber' => 'G-PENDING-BALANCE',
+            'points' => 100,
+            'status' => true,
+            'usable_date' => Carbon::today(),
+            'expires_at' => Carbon::today()->addYear(),
+        ]);
+
+        EarnedPoint::create([
+            'gratitudeNumber' => 'G-PENDING-BALANCE',
+            'points' => 250,
+            'status' => true,
+            'usable_date' => Carbon::today()->addDays(14),
+            'expires_at' => null,
+        ]);
+
+        $response = $this->actingAs($user)->getJson('/internal-api/gratitude?search=G-PENDING-BALANCE');
+
+        $response
+            ->assertOk()
+            ->assertJsonCount(1, 'points')
+            ->assertJsonPath('points.0.total_balance', 350)
+            ->assertJsonPath('points.0.useablePoints', 100)
+            ->assertJsonPath('points.0.pending_points', 250);
+    } finally {
+        Carbon::setTestNow();
+    }
+});

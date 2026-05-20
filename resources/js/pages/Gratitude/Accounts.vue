@@ -22,7 +22,7 @@ const columns = [
     { key: 'gratitudeNumber', label: 'Gratitude Number', sortable: true },
     { key: 'level', label: 'Level', sortable: true },
     { key: 'totalPoints', label: 'Total Points', sortable: true, align: 'right' as const },
-    { key: 'totalRemainingPoints', label: 'Remaining', sortable: true, align: 'right' as const },
+    { key: 'total_balance', label: 'Total Balance', sortable: true, align: 'right' as const },
     { key: 'useablePoints', label: 'Usable Points', sortable: true, align: 'right' as const },
     { key: 'pending_points', label: 'Pending Points', sortable: true, align: 'right' as const },
     { key: 'totalRedeemedPoints', label: 'Redeemed', sortable: true, align: 'right' as const },
@@ -37,10 +37,13 @@ const columns = [
 const gratitudePoints = ref<any[]>([]);
 const loading = ref(true);
 const importing = ref(false);
-const filterOptions = ref<{ levels: any[] }>({ levels: [] });
+const filterOptions = ref<{ levels: any[]; about_to_expire_days?: number }>({ levels: [], about_to_expire_days: 30 });
 const filters = ref({
     status: '',
     usable_points: '',
+    expiry_status: '',
+    expires_from: '',
+    expires_to: '',
     level: '',
     search: '',
 });
@@ -76,6 +79,9 @@ const resetFilters = () => {
     filters.value = {
         status: '',
         usable_points: '',
+        expiry_status: '',
+        expires_from: '',
+        expires_to: '',
         level: '',
         search: '',
     };
@@ -230,7 +236,7 @@ const recalculateLevel = async (gratitudeNumber: string) => {
                 </div>
             </div>
 
-            <div class="mt-6 grid gap-3 border-y border-border/70 py-4 md:grid-cols-[1.5fr_1fr_1fr_1fr_auto]">
+            <div class="mt-6 grid gap-3 border-y border-border/70 py-4 md:grid-cols-2 xl:grid-cols-[1.5fr_1fr_1fr_1fr_1fr_1fr_1fr_auto]">
                 <div>
                     <Label for="account-search" class="text-xs font-semibold uppercase text-muted-foreground">Gratitude Number</Label>
                     <div class="relative mt-1">
@@ -253,6 +259,21 @@ const recalculateLevel = async (gratitudeNumber: string) => {
                         <option value="with">With usable points</option>
                         <option value="without">No usable points</option>
                     </select>
+                </div>
+                <div>
+                    <Label for="expiry-filter" class="text-xs font-semibold uppercase text-muted-foreground">Expiration</Label>
+                    <select id="expiry-filter" v-model="filters.expiry_status" class="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
+                        <option value="">Any expiration</option>
+                        <option value="about_to_expire">About to expire ({{ filterOptions.about_to_expire_days || 30 }} days)</option>
+                    </select>
+                </div>
+                <div>
+                    <Label for="expires-from-filter" class="text-xs font-semibold uppercase text-muted-foreground">Expires From</Label>
+                    <Input id="expires-from-filter" v-model="filters.expires_from" type="date" class="mt-1" />
+                </div>
+                <div>
+                    <Label for="expires-to-filter" class="text-xs font-semibold uppercase text-muted-foreground">Expires To</Label>
+                    <Input id="expires-to-filter" v-model="filters.expires_to" type="date" class="mt-1" />
                 </div>
                 <div>
                     <Label for="level-filter" class="text-xs font-semibold uppercase text-muted-foreground">Level</Label>
@@ -296,8 +317,8 @@ const recalculateLevel = async (gratitudeNumber: string) => {
                     <template #cell-useablePoints="{ row }">
                         {{ formatNumber(row.useablePoints) }}
                     </template>
-                    <template #cell-totalRemainingPoints="{ row }">
-                        {{ formatNumber(row.totalRemainingPoints) }}
+                    <template #cell-total_balance="{ row }">
+                        {{ formatNumber(row.total_balance) }}
                     </template>
                     <template #cell-pending_points="{ row }">
                         {{ formatNumber(row.pending_points) }}

@@ -14,6 +14,8 @@ class GratitudeAccountService
 {
     private const EXPORT_TITLE = 'Gratitude - Art In Voyage';
 
+    private const ABOUT_TO_EXPIRE_DAYS = 30;
+
     public function accounts(array $filters = []): Collection
     {
         $accounts = $this->query($filters)->get();
@@ -23,9 +25,11 @@ class GratitudeAccountService
 
         return $accounts->map(function (Gratitude $gratitude) use ($levels) {
             $level = $levels->get($gratitude->level);
+
             $gratitude->setAttribute('level_icon_url', $level?->level_icon_url);
             $gratitude->setAttribute('level_image_url', $level?->level_image_url);
             $gratitude->setAttribute('redemption_points_per_dollar', (float) ($level?->redemption_points_per_dollar ?: 35));
+            $gratitude->setAttribute('total_balance', (int) ($gratitude->totalRemainingPoints ?? 0));
 
             return $gratitude;
         });
@@ -103,6 +107,8 @@ class GratitudeAccountService
             $query->where('gratitudeNumber', 'like', "%{$search}%");
         }
 
+        $this->applyExpirationFilters($query, $filters, $now);
+
         return $query->orderByDesc('updated_at')->orderByDesc('id');
     }
 
@@ -117,6 +123,7 @@ class GratitudeAccountService
             'levels' => GratitudeLevel::where('status', true)
                 ->orderBy('min_points')
                 ->get(['id', 'name', 'min_points', 'max_points']),
+            'about_to_expire_days' => self::ABOUT_TO_EXPIRE_DAYS,
         ];
     }
 
@@ -158,7 +165,7 @@ class GratitudeAccountService
 
         return $accounts
             ->map(function (Gratitude $account) {
-                $remainingPoints = (int) ($account->totalRemainingPoints ?? 0);
+                $totalBalance = (int) ($account->total_balance ?? $account->totalRemainingPoints ?? 0);
                 $useablePoints = (int) ($account->useablePoints ?? 0);
                 $pointsPerDollar = max(1, (float) ($account->getAttribute('redemption_points_per_dollar') ?: 35));
 
@@ -188,7 +195,7 @@ class GratitudeAccountService
                     'account' => [
                         'Gratitude Number' => $account->gratitudeNumber,
                         'Level' => $account->level ?: '',
-                        'Remaining Points' => $remainingPoints,
+                        'Total Balance' => $totalBalance,
                         'Useable Points' => $useablePoints,
                         '$ Value' => round($useablePoints / $pointsPerDollar, 2),
                         'Status' => ucfirst($this->accountStatus($account)),
@@ -202,6 +209,13 @@ class GratitudeAccountService
     {
         $status = strtolower((string) ($input['status'] ?? ''));
         $usablePoints = strtolower((string) ($input['usable_points'] ?? ''));
+        $expiryStatus = str_replace('-', '_', strtolower((string) ($input['expiry_status'] ?? $input['expiration_status'] ?? '')));
+        $expiresFrom = $this->normalizeDateFilter($input['expires_from'] ?? $input['date_from'] ?? null);
+        $expiresTo = $this->normalizeDateFilter($input['expires_to'] ?? $input['date_to'] ?? null);
+
+        if ($expiresFrom !== null && $expiresTo !== null && $expiresFrom > $expiresTo) {
+            [$expiresFrom, $expiresTo] = [$expiresTo, $expiresFrom];
+        }
 
         return [
             'status' => in_array($status, ['active', 'inactive'], true) ? $status : null,
@@ -210,7 +224,74 @@ class GratitudeAccountService
             'usable_max' => isset($input['usable_max']) && $input['usable_max'] !== '' ? max(0, (int) $input['usable_max']) : null,
             'level' => isset($input['level']) && $input['level'] !== '' ? (string) $input['level'] : null,
             'search' => isset($input['search']) && trim((string) $input['search']) !== '' ? trim((string) $input['search']) : null,
+            'expiry_status' => in_array($expiryStatus, ['about_to_expire', 'about_to_expired'], true) ? 'about_to_expire' : null,
+            'expires_from' => $expiresFrom,
+            'expires_to' => $expiresTo,
         ];
+    }
+
+    private function normalizeDateFilter(mixed $value): ?string
+    {
+        if (! is_scalar($value) || trim((string) $value) === '') {
+            return null;
+        }
+
+        try {
+            return Carbon::parse((string) $value)->toDateString();
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function applyExpirationFilters(Builder $query, array $filters, Carbon $now): void
+    {
+        $expiresFrom = $filters['expires_from'] ? Carbon::parse($filters['expires_from'])->startOfDay() : null;
+        $expiresTo = $filters['expires_to'] ? Carbon::parse($filters['expires_to'])->endOfDay() : null;
+
+        if ($filters['expiry_status'] === 'about_to_expire') {
+            $windowStart = $expiresFrom && $expiresFrom->gt($now) ? $expiresFrom : $now->copy();
+            $windowEnd = $expiresTo ?: $now->copy()->addDays(self::ABOUT_TO_EXPIRE_DAYS)->endOfDay();
+
+            $this->whereHasPointExpiringBetween($query, $windowStart, $windowEnd);
+
+            return;
+        }
+
+        if ($expiresFrom || $expiresTo) {
+            $this->whereHasPointExpiringBetween($query, $expiresFrom, $expiresTo);
+        }
+    }
+
+    private function whereHasPointExpiringBetween(Builder $query, ?Carbon $from, ?Carbon $to): void
+    {
+        $query->where(function (Builder $q) use ($from, $to) {
+            $q->whereExists(fn ($subquery) => $this->pointExpiryExistsSubquery($subquery, 'earned_points', $from, $to))
+                ->orWhereExists(fn ($subquery) => $this->pointExpiryExistsSubquery($subquery, 'bonus_points', $from, $to));
+        });
+    }
+
+    private function pointExpiryExistsSubquery($query, string $table, ?Carbon $from, ?Carbon $to): void
+    {
+        $query->selectRaw('1')
+            ->from($table)
+            ->whereColumn($table.'.gratitudeNumber', 'gratitudes.gratitudeNumber')
+            ->whereNull($table.'.cancel_id')
+            ->whereIn($table.'.status', [true, 1, '1'])
+            ->whereNotNull($table.'.expires_at')
+            ->whereRaw($this->remainingPointsPositiveExpression($table));
+
+        if ($from) {
+            $query->where($table.'.expires_at', '>=', $from);
+        }
+
+        if ($to) {
+            $query->where($table.'.expires_at', '<=', $to);
+        }
+    }
+
+    private function remainingPointsPositiveExpression(string $table): string
+    {
+        return 'COALESCE('.$table.'.points, 0) > COALESCE('.$table.'.redeemed_points, 0) + COALESCE('.$table.'.cancelled_points, 0)';
     }
 
     private function accountStatus(Gratitude $account): string
@@ -375,6 +456,12 @@ class GratitudeAccountService
         if ($filters['search']) {
             $summary[] = 'Search: '.$filters['search'];
         }
+        if ($filters['expiry_status'] === 'about_to_expire') {
+            $summary[] = 'Expiration: about to expire';
+        }
+        if ($filters['expires_from'] || $filters['expires_to']) {
+            $summary[] = 'Expires: '.($filters['expires_from'] ?? 'any').' to '.($filters['expires_to'] ?? 'any');
+        }
 
         return $summary;
     }
@@ -390,7 +477,7 @@ class GratitudeAccountService
             'Guests Preferred Name',
             'Guests Date of Birth',
             'Guests Email',
-            'Remaining Points',
+            'Total Balance',
             'Useable Points',
             '$ Value',
             'Status',
@@ -445,7 +532,7 @@ class GratitudeAccountService
 
     private function formatExportValue(mixed $value, string $column): string
     {
-        if (in_array($column, ['Remaining Points', 'Useable Points', '$ Value'], true)) {
+        if (in_array($column, ['Total Balance', 'Useable Points', '$ Value'], true)) {
             return number_format((float) $value, 2, ',', ' ');
         }
 
@@ -585,7 +672,7 @@ class GratitudeAccountService
             ['key' => 'Guests Preferred Name', 'label' => 'Guests Preferred Name', 'width' => 76],
             ['key' => 'Guests Date of Birth', 'label' => 'Guests Date of Birth', 'width' => 72],
             ['key' => 'Guests Email', 'label' => 'Guests Email', 'width' => 110],
-            ['key' => 'Remaining Points', 'label' => 'Remaining Points', 'width' => 60],
+            ['key' => 'Total Balance', 'label' => 'Total Balance', 'width' => 60],
             ['key' => 'Useable Points', 'label' => 'Useable Points', 'width' => 60],
             ['key' => '$ Value', 'label' => '$ Value', 'width' => 46],
             ['key' => 'Status', 'label' => 'Status', 'width' => 40],
