@@ -291,6 +291,17 @@ class GratitudeController extends Controller
     {
         $totalAccounts = Gratitude::count();
         $totalUsable = Gratitude::sum('useablePoints');
+        $levelRedemptionRates = GratitudeLevel::query()
+            ->pluck('redemption_points_per_dollar', 'name');
+        $totalUsableAmount = Gratitude::query()
+            ->select('level', DB::raw('SUM(COALESCE(useablePoints, 0)) as usable_points'))
+            ->groupBy('level')
+            ->get()
+            ->sum(function ($accountGroup) use ($levelRedemptionRates) {
+                $pointsPerDollar = max(1, (float) ($levelRedemptionRates->get($accountGroup->level) ?: 35));
+
+                return (float) $accountGroup->usable_points / $pointsPerDollar;
+            });
         $totalPending = EarnedPoint::activeStatus()
             ->whereNotNull('usable_date')
             ->where('usable_date', '>', Carbon::now())
@@ -302,6 +313,7 @@ class GratitudeController extends Controller
             'total_accounts' => $totalAccounts,
             'total_point_balance' => Gratitude::sum('totalPoints'),
             'total_usable_points' => $totalUsable,
+            'total_usable_amount' => round($totalUsableAmount, 2),
             'total_pending_points' => $totalPending,
             'total_reserved' => $totalReserved,
             'total_used_money' => $totalUsedMoney,

@@ -58,7 +58,7 @@ class TierService
                     $newLevel,
                     $metrics,
                     $changedBy,
-                    $asOf,
+                    $cycleEnd,
                     $cycleEnd,
                     'cycle_review'
                 );
@@ -67,12 +67,18 @@ class TierService
                 $iterations++;
             }
 
-            [$cycleStart] = $this->cycleWindow($gratitude, $levels, $asOf);
-            $metrics = $this->cycleMetrics($gratitude->gratitudeNumber, $cycleStart, $asOf);
-            $oldLevel = $gratitude->level ?? $this->defaultLevelName($levels);
-            $newLevel = $this->resolveLevelForMetrics($metrics['earned_points'], $metrics['journey_count'], $levels);
+            $upgradeIterations = 0;
+            while ($upgradeIterations < 10) {
+                [$cycleStart] = $this->cycleWindow($gratitude, $levels, $asOf);
+                $metrics = $this->cycleMetrics($gratitude->gratitudeNumber, $cycleStart, $asOf);
+                $oldLevel = $gratitude->level ?? $this->defaultLevelName($levels);
+                $targetLevel = $this->resolveLevelForMetrics($metrics['earned_points'], $metrics['journey_count'], $levels);
+                $newLevel = $this->nextHigherLevel($oldLevel, $targetLevel, $levels);
 
-            if ($this->rank($newLevel, $levels) > $this->rank($oldLevel, $levels)) {
+                if ($newLevel === null) {
+                    break;
+                }
+
                 $qualification = $this->qualificationSnapshot($gratitude->gratitudeNumber, $cycleStart, $asOf, $newLevel, $levels);
                 $effectiveAt = $qualification['date'] ?? $asOf;
 
@@ -86,6 +92,9 @@ class TierService
                     $effectiveAt,
                     'threshold_upgrade'
                 );
+
+                $gratitude->refresh();
+                $upgradeIterations++;
             }
 
             return $gratitude->fresh();
@@ -201,7 +210,7 @@ class TierService
             return;
         }
 
-        $level = $gratitude->level ?: $this->defaultLevelName($levels);
+        $level = $this->defaultLevelName($levels);
         $start = $this->cycleStart($gratitude, $asOf);
         $metrics = $this->cycleMetrics($gratitude->gratitudeNumber, $start, $start);
 
@@ -319,6 +328,22 @@ class TierService
     private function minimumJourneysFor(GratitudeLevel $level): int
     {
         return max(0, (int) ($level->min_journeys ?? $level->jetsetter_min_journeys ?? 0));
+    }
+
+    private function nextHigherLevel(string $currentLevel, string $targetLevel, Collection $levels): ?string
+    {
+        $currentRank = $this->rank($currentLevel, $levels);
+        $targetRank = $this->rank($targetLevel, $levels);
+
+        if ($targetRank <= $currentRank) {
+            return null;
+        }
+
+        return $levels
+            ->sortBy('min_points')
+            ->values()
+            ->first(fn ($level, int $index) => $index + 1 === $currentRank + 1)
+            ?->name;
     }
 
     private function defaultLevelName(Collection $levels): string

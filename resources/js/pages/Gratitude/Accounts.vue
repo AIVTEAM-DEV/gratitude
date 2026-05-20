@@ -25,6 +25,7 @@ const columns = [
     { key: 'total_balance', label: 'Total Balance', sortable: true, align: 'right' as const },
     { key: 'useablePoints', label: 'Usable Points', sortable: true, align: 'right' as const },
     { key: 'pending_points', label: 'Pending Points', sortable: true, align: 'right' as const },
+    { key: 'expiring_soon_points', label: 'Expiring Soon', sortable: true, align: 'right' as const },
     { key: 'totalRedeemedPoints', label: 'Redeemed', sortable: true, align: 'right' as const },
     { key: 'totalCancelledPoints', label: 'Cancelled', sortable: true, align: 'right' as const },
     { key: 'totalExpiredPoints', label: 'Expired Points', sortable: true, align: 'right' as const },
@@ -322,6 +323,9 @@ const recalculateLevel = async (gratitudeNumber: string) => {
                     </template>
                     <template #cell-pending_points="{ row }">
                         {{ formatNumber(row.pending_points) }}
+                    </template>
+                    <template #cell-expiring_soon_points="{ row }">
+                        {{ formatNumber(row.expiring_soon_points) }}
                     </template>
                     <template #cell-totalRedeemedPoints="{ row }">
                         {{ formatNumber(row.totalRedeemedPoints) }}

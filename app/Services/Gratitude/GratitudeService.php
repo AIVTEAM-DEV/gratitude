@@ -28,7 +28,7 @@ class GratitudeService
                 ? Carbon::parse($data['level_obtained_at'])
                 : Carbon::now();
 
-            $level = $data['level'] ?? $this->defaultLevelName();
+            $level = $this->defaultLevelName();
             $gratitudeNumber = $data['gratitudeNumber']
                 ?? $data['gratitude_number']
                 ?? $this->generateGratitudeNumber($data['_prefix'] ?? 'G');
@@ -48,10 +48,14 @@ class GratitudeService
                 'level' => $level,
                 'levelHistory' => [
                     [
-                        'level' => $level,
-                        'startDate' => $levelObtainedAt->toDateString(),
-                        'endDate' => null,
+                        'fromLevel' => $level,
+                        'toLevel' => $level,
+                        'changeType' => 'initial',
+                        'date' => $levelObtainedAt->toDateString(),
+                        'earnedPoints' => 0,
+                        'journeyCount' => 0,
                         'changedBy' => 'external_api',
+                        'reason' => 'Initial Gratitude level assigned',
                     ],
                 ],
                 'level_obtained_at' => $levelObtainedAt,
@@ -100,14 +104,14 @@ class GratitudeService
                 'gratitudeNumber' => $record['gratitudeNumber'] ?? null,
                 'totalPoints' => $record['totalPoints'] ?? 0,
                 'useablePoints' => $record['useablePoints'] ?? 0,
-                'level' => $record['level'] ?? 'Explorer',
+                'level' => $this->defaultLevelName(),
                 'status' => $this->normalizeAccountStatus($record['status'] ?? 'active'),
-                'statusChange' => $record['statusChange'] ?? null,
+                'statusChange' => null,
                 'importStatus' => $record['importStatus'] ?? 1,
                 'is_active' => $this->normalizeAccountStatus($record['status'] ?? 'active') === 'active',
                 'level_obtained_at' => ! empty($record['level_obtained_at'])
                     ? Carbon::parse($record['level_obtained_at'])
-                    : (! empty($record['created_at']) ? Carbon::parse($record['created_at']) : null),
+                    : null,
                 'expires_at' => ! empty($record['expires_at']) ? Carbon::parse($record['expires_at']) : null,
                 'created_at' => ! empty($record['created_at']) ? Carbon::parse($record['created_at']) : null,
                 'updated_at' => ! empty($record['updated_at']) ? Carbon::parse($record['updated_at']) : null,
@@ -255,7 +259,7 @@ class GratitudeService
                 foreach ($record['redeemPoints'] as $rp) {
                     $cancel_id = $this->resolveCancelId($rp['cancel_id'] ?? null);
 
-                    RedeemPoints::updateOrCreate(
+                    $redemption = RedeemPoints::updateOrCreate(
                         ['old_id' => $rp['id']],
                         [
                             'user_id' => $rp['user_id'] ?? null,
@@ -266,18 +270,30 @@ class GratitudeService
                             'amount' => $rp['amount'] ?? 0,
                             'roomStatus' => $rp['roomStatus'] ?? null,
                             'reason' => $rp['description'] ?? 'Imported Redemption',
+                            'category' => $rp['category'] ?? $rp['redemption_type'] ?? null,
                             'status' => $rp['status'] ?? null,
-                            'created_at' => ! empty($rp['created_at']) ? Carbon::parse($rp['created_at']) : null,
-                            'updated_at' => ! empty($rp['updated_at']) ? Carbon::parse($rp['updated_at']) : null,
+                            'points_breakdown' => $rp['points_breakdown'] ?? null,
                         ]
                     );
+
+                    $timestamps = [];
+                    if (! empty($rp['created_at'])) {
+                        $timestamps['created_at'] = Carbon::parse($rp['created_at']);
+                    }
+                    if (! empty($rp['updated_at'])) {
+                        $timestamps['updated_at'] = Carbon::parse($rp['updated_at']);
+                    }
+                    if ($timestamps !== []) {
+                        $redemption->forceFill($timestamps)->save();
+                    }
                 }
             }
 
             if ($gratitude->gratitudeNumber && $hasPointData) {
-                self::syncAccountBalance($gratitude->gratitudeNumber);
                 $this->syncImportedCancellationBreakdown($gratitude->gratitudeNumber);
                 app(TierService::class)->recalculateTier($gratitude->gratitudeNumber, 'import');
+                $this->rebuildImportedRedemptionAllocations($gratitude->gratitudeNumber);
+                self::syncAccountBalance($gratitude->gratitudeNumber);
             }
         }
     }
@@ -610,6 +626,151 @@ class GratitudeService
         return $date ? Carbon::parse($date) : null;
     }
 
+    private function rebuildImportedRedemptionAllocations(string $gratitudeNumber): void
+    {
+        $redemptions = RedeemPoints::where('gratitudeNumber', $gratitudeNumber)
+            ->whereNotNull('old_id')
+            ->orderByRaw('COALESCE(created_at, updated_at)')
+            ->orderBy('id')
+            ->get();
+
+        if ($redemptions->isEmpty()) {
+            return;
+        }
+
+        RedeemPointsDetails::whereIn('redeem_id', $redemptions->pluck('id'))->delete();
+
+        EarnedPoint::where('gratitudeNumber', $gratitudeNumber)
+            ->update([
+                'redeemed_points' => 0,
+                'redemption_history' => null,
+            ]);
+
+        BonusPoint::where('gratitudeNumber', $gratitudeNumber)
+            ->update([
+                'redeemed_points' => 0,
+                'redemption_history' => null,
+            ]);
+
+        $gratitude = Gratitude::where('gratitudeNumber', $gratitudeNumber)->first();
+        if (! $gratitude) {
+            return;
+        }
+
+        foreach ($redemptions as $redemption) {
+            $this->applyHistoricalRedemptionAllocation($gratitude, $redemption);
+        }
+    }
+
+    private function applyHistoricalRedemptionAllocation(Gratitude $gratitude, RedeemPoints $redemption): void
+    {
+        $points = max(0, (int) $redemption->points);
+        if ($points <= 0) {
+            return;
+        }
+
+        $redemptionDate = $this->redemptionOccurredAt($redemption);
+        $redemptionType = $redemption->category ?: ($redemption->journey_id ? 'journey' : 'partner');
+        $levelName = $this->levelNameAt($gratitude, $redemptionDate);
+        $level = GratitudeLevel::where('name', $levelName)->first();
+        $pointsPerDollar = $this->pointsPerDollarForRedemption($level, $redemptionType);
+        $calculatedAmount = round($points / $pointsPerDollar, 2);
+        $queue = $this->pointLedgerService->redeemableQueue($gratitude->gratitudeNumber, $redemptionDate);
+        $usablePointsAtRedemption = (int) $queue->sum(fn ($segment) => (int) $segment->available_points);
+        $pointsRemaining = $points;
+
+        foreach ($queue as $segment) {
+            if ($pointsRemaining <= 0) {
+                break;
+            }
+
+            $available = (int) $segment->available_points;
+            if ($available <= 0) {
+                continue;
+            }
+
+            $toDeduct = min($available, $pointsRemaining);
+            $history = is_array($segment->redemption_history) ? $segment->redemption_history : [];
+            $history[] = [
+                'redemption_id' => $redemption->id,
+                'date' => $redemptionDate->toDateString(),
+                'points' => $toDeduct,
+                'amount' => round($toDeduct / $pointsPerDollar, 2),
+                'reason' => $redemption->reason ?: 'Imported Redemption',
+                'redemption_type' => $redemptionType,
+                'level_at_redemption' => $levelName,
+                'points_per_dollar' => $pointsPerDollar,
+            ];
+
+            $segment->getConnection()
+                ->table($segment->getTable())
+                ->where('id', $segment->id)
+                ->update([
+                    'redeemed_points' => (int) $segment->redeemed_points + $toDeduct,
+                    'redemption_history' => json_encode($history),
+                    'updated_at' => Carbon::now(),
+                ]);
+
+            $segment->redeemed_points += $toDeduct;
+            $segment->available_points -= $toDeduct;
+
+            RedeemPointsDetails::create([
+                'user_id' => $redemption->user_id,
+                'redeem_id' => $redemption->id,
+                'source_id' => $segment->id,
+                'source_type' => get_class($segment),
+                'points' => $toDeduct,
+                'points_breakdown' => [
+                    'date' => $redemptionDate->toDateString(),
+                    'level_at_redemption' => $levelName,
+                    'points_per_dollar' => $pointsPerDollar,
+                    'redemption_type' => $redemptionType,
+                ],
+            ]);
+
+            $pointsRemaining -= $toDeduct;
+        }
+
+        $redemption->update([
+            'amount' => $calculatedAmount,
+            'category' => $redemptionType,
+            'status' => $redemption->status ?: 'approved',
+            'points_breakdown' => array_merge($redemption->points_breakdown ?? [], [
+                'redemption_type' => $redemptionType,
+                'level_at_redemption' => $levelName,
+                'points_per_dollar' => $pointsPerDollar,
+                'usable_points_at_redemption' => $usablePointsAtRedemption,
+                'calculated_amount' => $calculatedAmount,
+                'unallocated_points' => max(0, $pointsRemaining),
+                'recalculated_from_import' => true,
+            ]),
+        ]);
+    }
+
+    private function redemptionOccurredAt(RedeemPoints $redemption): Carbon
+    {
+        return $redemption->created_at
+            ? Carbon::parse($redemption->created_at)
+            : ($redemption->updated_at ? Carbon::parse($redemption->updated_at) : Carbon::now());
+    }
+
+    private function levelNameAt(Gratitude $gratitude, CarbonInterface $date): string
+    {
+        $history = collect($gratitude->levelHistory ?? [])
+            ->filter(fn ($entry) => is_array($entry) && ! empty($entry['date']))
+            ->filter(fn ($entry) => Carbon::parse($entry['date'])->lte($date))
+            ->sortBy(fn ($entry) => Carbon::parse($entry['date'])->timestamp)
+            ->values();
+
+        if ($history->isNotEmpty()) {
+            $entry = $history->last();
+
+            return $entry['toLevel'] ?? $entry['level'] ?? $gratitude->level ?? $this->defaultLevelName();
+        }
+
+        return $gratitude->level ?? $this->defaultLevelName();
+    }
+
     /**
      * Redeem points from a gratitude account using soonest-expiring FIFO logic.
      * Journey redemptions use the level redemption rate; partner redemptions use the partner rate.
@@ -627,17 +788,20 @@ class GratitudeService
                 }
 
                 $redemptionType = $data['redemption_type'] ?? $data['category'] ?? 'partner';
+                $redemptionDate = ! empty($data['date'])
+                    ? Carbon::parse($data['date'])
+                    : Carbon::now();
+                $levelName = $this->levelNameAt($getGratitude, $redemptionDate);
 
-                if (! empty($data['benefit_key']) && ! (new GratitudeBenefitsService)->levelHasBenefit($getGratitude->level, $data['benefit_key'])) {
-                    return ['error' => "Your {$getGratitude->level} membership does not include the '{$data['benefit_key']}' benefit."];
+                if (! empty($data['benefit_key']) && ! (new GratitudeBenefitsService)->levelHasBenefit($levelName, $data['benefit_key'])) {
+                    return ['error' => "Your {$levelName} membership does not include the '{$data['benefit_key']}' benefit."];
                 }
 
-                $level = GratitudeLevel::where('name', $getGratitude->level)->first();
+                $level = GratitudeLevel::where('name', $levelName)->first();
                 $pointsPerDollar = $this->pointsPerDollarForRedemption($level, $redemptionType);
                 $monetaryValue = round($points / $pointsPerDollar, 2);
-                $now = Carbon::now();
 
-                $allPoints = $this->pointLedgerService->redeemableQueue($gratitude_number, $now);
+                $allPoints = $this->pointLedgerService->redeemableQueue($gratitude_number, $redemptionDate);
 
                 $availableSum = $allPoints->sum(function ($segment) {
                     return (float) $segment->available_points;
@@ -657,8 +821,9 @@ class GratitudeService
                     'journey_id' => $data['journey_id'] ?? null,
                     'points_breakdown' => [
                         'redemption_type' => $redemptionType,
-                        'level_at_redemption' => $getGratitude->level,
+                        'level_at_redemption' => $levelName,
                         'points_per_dollar' => $pointsPerDollar,
+                        'usable_points_at_redemption' => $availableSum,
                         'calculated_amount' => $monetaryValue,
                         'journey_data' => $data['journey_data'] ?? null,
                     ],
@@ -684,12 +849,12 @@ class GratitudeService
                     $existingHistory = is_array($segment->redemption_history) ? $segment->redemption_history : [];
                     $existingHistory[] = [
                         'redemption_id' => $redemption->id,
-                        'date' => Carbon::now()->toDateString(),
+                        'date' => $redemptionDate->toDateString(),
                         'points' => $toDeduct,
                         'amount' => $segmentMonetaryValue,
                         'reason' => $data['reason'] ?? 'Point Redemption',
                         'redemption_type' => $redemptionType,
-                        'level_at_redemption' => $getGratitude->level,
+                        'level_at_redemption' => $levelName,
                         'points_per_dollar' => $pointsPerDollar,
                         'journey_data' => $segment->project_data ?? null,
                     ];

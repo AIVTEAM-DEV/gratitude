@@ -2,6 +2,7 @@
 
 namespace App\Services\Gratitude;
 
+use App\Models\Gratitude\BonusPoint;
 use App\Models\Gratitude\EarnedPoint;
 use App\Models\Gratitude\Gratitude;
 use App\Models\Gratitude\GratitudeLevel;
@@ -25,11 +26,14 @@ class GratitudeAccountService
 
         return $accounts->map(function (Gratitude $gratitude) use ($levels) {
             $level = $levels->get($gratitude->level);
+            $expiringSoonPoints = (int) ($gratitude->earned_expiring_soon_points ?? 0)
+                + (int) ($gratitude->bonus_expiring_soon_points ?? 0);
 
             $gratitude->setAttribute('level_icon_url', $level?->level_icon_url);
             $gratitude->setAttribute('level_image_url', $level?->level_image_url);
             $gratitude->setAttribute('redemption_points_per_dollar', (float) ($level?->redemption_points_per_dollar ?: 35));
             $gratitude->setAttribute('total_balance', (int) ($gratitude->totalRemainingPoints ?? 0));
+            $gratitude->setAttribute('expiring_soon_points', $expiringSoonPoints);
 
             return $gratitude;
         });
@@ -39,6 +43,7 @@ class GratitudeAccountService
     {
         $filters = $this->normalizeFilters($filters);
         $now = Carbon::now();
+        $expiringSoonUntil = $now->copy()->addDays(self::ABOUT_TO_EXPIRE_DAYS)->endOfDay();
 
         $query = Gratitude::query()
             ->select(
@@ -67,6 +72,14 @@ class GratitudeAccountService
                     ->whereNotNull('usable_date')
                     ->where('usable_date', '>', $now),
                 'pending_points'
+            )
+            ->selectSub(
+                $this->pointSumExpiringBetweenSubquery(EarnedPoint::class, $now, $expiringSoonUntil),
+                'earned_expiring_soon_points'
+            )
+            ->selectSub(
+                $this->pointSumExpiringBetweenSubquery(BonusPoint::class, $now, $expiringSoonUntil),
+                'bonus_expiring_soon_points'
             );
 
         if ($filters['status'] === 'active') {
@@ -241,6 +254,19 @@ class GratitudeAccountService
         } catch (\Throwable) {
             return null;
         }
+    }
+
+    private function pointSumExpiringBetweenSubquery(string $modelClass, Carbon $from, Carbon $to): Builder
+    {
+        return $modelClass::query()
+            ->selectRaw('COALESCE(SUM(CASE WHEN COALESCE(points, 0) - COALESCE(redeemed_points, 0) - COALESCE(cancelled_points, 0) > 0 THEN COALESCE(points, 0) - COALESCE(redeemed_points, 0) - COALESCE(cancelled_points, 0) ELSE 0 END), 0)')
+            ->whereColumn('gratitudeNumber', 'gratitudes.gratitudeNumber')
+            ->whereNull('cancel_id')
+            ->activeStatus()
+            ->withRemainingPoints()
+            ->whereNotNull('expires_at')
+            ->where('expires_at', '>=', $from)
+            ->where('expires_at', '<=', $to);
     }
 
     private function applyExpirationFilters(Builder $query, array $filters, Carbon $now): void

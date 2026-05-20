@@ -29,6 +29,7 @@ type GratitudeOverviewSummary = {
     total_accounts: number;
     total_point_balance: number;
     total_usable_points: number;
+    total_usable_amount: number;
     total_pending_points: number;
     total_reserved: number;
     total_used_money: number;
@@ -63,6 +64,7 @@ const summary = ref<GratitudeOverviewSummary>({
     total_accounts: 0,
     total_point_balance: 0,
     total_usable_points: 0,
+    total_usable_amount: 0,
     total_pending_points: 0,
     total_reserved: 0,
     total_used_money: 0,
@@ -88,7 +90,7 @@ const metrics = computed(() => [
     {
         label: 'Usable Points',
         value: formatNumber(summary.value.total_usable_points),
-        detail: 'Available for redemption',
+        detail: `Total amount: ${formatMoney(summary.value.total_usable_amount)}`,
         icon: CircleDollarSign,
         color: 'text-emerald-600 bg-emerald-500/10',
     },

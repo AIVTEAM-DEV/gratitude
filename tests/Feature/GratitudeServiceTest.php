@@ -10,6 +10,7 @@ use App\Models\Gratitude\Gratitude;
 use App\Models\Gratitude\GratitudeBenefit;
 use App\Models\Gratitude\GratitudeEarnedBenefit;
 use App\Models\Gratitude\GratitudeLevel;
+use App\Models\Gratitude\RedeemPoints;
 use App\Models\User;
 use App\Services\Gratitude\CancellationService;
 use App\Services\Gratitude\GratitudeService;
@@ -68,6 +69,13 @@ class GratitudeServiceTest extends TestCase
         $this->assertEquals('Explorer', $gratitude->level);
         $this->assertEquals(0, $gratitude->totalPoints);
         $this->assertTrue($gratitude->is_active);
+
+        $manualLevelAttempt = $this->gratitudeService->createAccount([
+            'gratitudeNumber' => 'G0011',
+            'level' => 'Jetsetter',
+        ]);
+
+        $this->assertEquals('Explorer', $manualLevelAttempt->level);
     }
 
     public function test_external_api_can_create_a_gratitude_account()
@@ -140,6 +148,36 @@ class GratitudeServiceTest extends TestCase
             ->assertJsonPath('0.usable_points', 70)
             ->assertJsonPath('0.points_per_dollar', 35)
             ->assertJsonPath('0.usable_points_dollar_value', 2);
+    }
+
+    public function test_internal_overview_includes_usable_points_total_amount()
+    {
+        GratitudeLevel::where('name', 'Explorer')->update([
+            'redemption_points_per_dollar' => 35,
+        ]);
+        GratitudeLevel::where('name', 'Globetrotter')->update([
+            'redemption_points_per_dollar' => 30,
+        ]);
+
+        Gratitude::where('gratitudeNumber', $this->gratitudeNumber)->update([
+            'useablePoints' => 70,
+            'level' => 'Explorer',
+        ]);
+
+        Gratitude::create([
+            'gratitudeNumber' => 'G-OVERVIEW-2001',
+            'useablePoints' => 60,
+            'level' => 'Globetrotter',
+            'level_obtained_at' => Carbon::today(),
+        ]);
+
+        $response = $this->actingAs($this->user)->getJson('/internal-api/gratitude/overview');
+
+        $response
+            ->assertOk()
+            ->assertJsonPath('total_usable_points', 130);
+
+        $this->assertEquals(4, $response->json('total_usable_amount'));
     }
 
     public function test_external_api_can_check_level()
@@ -331,10 +369,24 @@ class GratitudeServiceTest extends TestCase
         $gratitude = $this->tierService->recalculateTier($this->gratitudeNumber);
         $this->assertEquals('Globetrotter', $gratitude->level);
         $this->assertEquals('upgrade', $gratitude->statusChange);
+        $this->assertEquals(Carbon::today()->toDateString(), $gratitude->level_obtained_at->toDateString());
 
         $this->gratitudeService->redeemPoints($this->gratitudeNumber, ['reason' => 'Partner spend', 'redemption_type' => 'partner'], 15000);
         $gratitude = $this->tierService->recalculateTier($this->gratitudeNumber);
         $this->assertEquals('Globetrotter', $gratitude->level, 'Redeeming points must not downgrade the level inside the 2-year interval.');
+
+        EarnedPoint::create([
+            'gratitudeNumber' => $this->gratitudeNumber,
+            'journey_id' => 702,
+            'date' => Carbon::today()->addDay(),
+            'points' => 15001,
+            'status' => 'active',
+            'usable_date' => Carbon::today()->addDay(),
+        ]);
+
+        $gratitude = $this->tierService->recalculateTier($this->gratitudeNumber, 'system', Carbon::today()->addDay());
+        $this->assertEquals('Jetsetter', $gratitude->level);
+        $this->assertEquals(Carbon::today()->addDay()->toDateString(), $gratitude->level_obtained_at->toDateString());
 
         $p1->usable_date = Carbon::today()->subYears(3);
         $p1->save();
@@ -446,6 +498,80 @@ class GratitudeServiceTest extends TestCase
         $this->assertEquals(350, $earned->redeemed_points);
     }
 
+    public function test_imported_redemptions_are_rebuilt_using_redemption_date_level_and_usable_points()
+    {
+        $gratitudeNumber = 'G-IMPORT-REDEEM-HISTORY';
+
+        Carbon::setTestNow(Carbon::parse('2026-04-01 12:00:00'));
+
+        try {
+            $this->gratitudeService->import([
+                [
+                    'id' => 993,
+                    'gratitudeNumber' => $gratitudeNumber,
+                    'level' => 'Jetsetter',
+                    'earnedPoints' => [
+                        [
+                            'id' => 1001,
+                            'gratitudeNumber' => $gratitudeNumber,
+                            'journey_id' => 3001,
+                            'points' => 16000,
+                            'redeemed_points' => 0,
+                            'date' => '2026-01-01 00:00:00',
+                            'description' => 'First journey points',
+                            'status' => 'active',
+                        ],
+                        [
+                            'id' => 1002,
+                            'gratitudeNumber' => $gratitudeNumber,
+                            'journey_id' => 3002,
+                            'points' => 15001,
+                            'redeemed_points' => 0,
+                            'date' => '2026-02-01 00:00:00',
+                            'description' => 'Second journey points',
+                            'status' => 'active',
+                        ],
+                    ],
+                    'redeemPoints' => [
+                        [
+                            'id' => 2001,
+                            'gratitudeNumber' => $gratitudeNumber,
+                            'points' => 3000,
+                            'amount' => 999,
+                            'category' => 'partner',
+                            'description' => 'Imported historical partner redemption',
+                            'status' => 'approved',
+                            'created_at' => '2026-02-15 09:00:00',
+                        ],
+                    ],
+                ],
+            ], [
+                3001 => ['id' => 3001, 'endDate' => '2026-01-10'],
+                3002 => ['id' => 3002, 'endDate' => '2026-03-01'],
+            ]);
+        } finally {
+            Carbon::setTestNow();
+        }
+
+        $gratitude = Gratitude::where('gratitudeNumber', $gratitudeNumber)->firstOrFail();
+        $redemption = RedeemPoints::with('details.source')
+            ->where('gratitudeNumber', $gratitudeNumber)
+            ->firstOrFail();
+        $firstPoint = EarnedPoint::where('old_id', 1001)->firstOrFail();
+        $secondPoint = EarnedPoint::where('old_id', 1002)->firstOrFail();
+
+        $this->assertEquals('Jetsetter', $gratitude->level);
+        $this->assertEquals(3000, $firstPoint->redeemed_points);
+        $this->assertEquals(0, $secondPoint->redeemed_points);
+        $this->assertEquals('85.71', (string) $redemption->amount);
+        $this->assertEquals('Globetrotter', $redemption->points_breakdown['level_at_redemption']);
+        $this->assertEquals(35, $redemption->points_breakdown['points_per_dollar']);
+        $this->assertEquals(16000, $redemption->points_breakdown['usable_points_at_redemption']);
+        $this->assertEquals(0, $redemption->points_breakdown['unallocated_points']);
+        $this->assertCount(1, $redemption->details);
+        $this->assertEquals($firstPoint->id, $redemption->details->first()->source_id);
+    }
+
     public function test_import_skips_legacy_negative_expiration_rows()
     {
         $gratitudeNumber = 'G-IMPORT-EXPIRY';
@@ -515,7 +641,7 @@ class GratitudeServiceTest extends TestCase
             'gratitudeNumber' => $gratitudeNumber,
             'totalPoints' => 5000,
             'useablePoints' => 4200,
-            'level' => 'Globetrotter',
+            'level' => 'Explorer',
         ]);
     }
 

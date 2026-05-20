@@ -185,7 +185,8 @@ test('gratitude account filters can find points about to expire and expiry date 
             ->assertOk()
             ->assertJsonCount(1, 'points')
             ->assertJsonPath('points.0.gratitudeNumber', 'G-SOON')
-            ->assertJsonPath('points.0.total_balance', 150);
+            ->assertJsonPath('points.0.total_balance', 150)
+            ->assertJsonPath('points.0.expiring_soon_points', 150);
 
         $dateRange = $this->actingAs($user)->getJson('/internal-api/gratitude?expires_from=2026-07-01&expires_to=2026-07-15');
 
@@ -193,7 +194,8 @@ test('gratitude account filters can find points about to expire and expiry date 
             ->assertOk()
             ->assertJsonCount(1, 'points')
             ->assertJsonPath('points.0.gratitudeNumber', 'G-LATER')
-            ->assertJsonPath('points.0.total_balance', 250);
+            ->assertJsonPath('points.0.total_balance', 250)
+            ->assertJsonPath('points.0.expiring_soon_points', 0);
     } finally {
         Carbon::setTestNow();
     }

@@ -23,6 +23,7 @@ interface GratitudeOverviewSummary {
     total_accounts: number;
     total_point_balance: number;
     total_usable_points: number;
+    total_usable_amount: number;
     total_pending_points: number;
     total_reserved: number;
     total_used_money: number;
@@ -45,6 +46,13 @@ const fetchGratitudeData = async () => {
 onMounted(() => {
     fetchGratitudeData();
 });
+
+const formatMoney = (value: number | string | null | undefined) =>
+    new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        maximumFractionDigits: 2,
+    }).format(Number(value || 0));
 
 </script>
 
@@ -92,7 +100,7 @@ onMounted(() => {
                     </div>
                     <div>
                         <div class="text-3xl font-bold">{{ summary?.total_usable_points.toLocaleString() }}</div>
-                        <p class="text-xs text-muted-foreground mt-1">Points available across all accounts</p>
+                        <p class="text-xs text-muted-foreground mt-1">Total amount: {{ formatMoney(summary?.total_usable_amount) }}</p>
                     </div>
                 </div>
 
