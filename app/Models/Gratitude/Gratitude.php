@@ -4,7 +4,6 @@ namespace App\Models\Gratitude;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Facades\Http;
 use Spatie\Activitylog\LogOptions;
 use Spatie\Activitylog\Traits\LogsActivity;
 
@@ -78,31 +77,6 @@ class Gratitude extends Model
     public function levelConfig()
     {
         return $this->belongsTo(GratitudeLevel::class, 'level', 'name');
-    }
-
-    public function guests(int|float $timeout = 8, int|float $connectTimeout = 3): array
-    {
-        if ($this->guests_data !== null) {
-            return self::normalizeGuestsData($this->guests_data);
-        }
-
-        if (! $this->gratitudeNumber || ! config('services.aivteam.base_url')) {
-            return [];
-        }
-
-        try {
-            $response = Http::withoutVerifying()
-                ->withToken(config('services.aivteam.access_token'))
-                ->connectTimeout($connectTimeout)
-                ->timeout($timeout)
-                ->get(rtrim((string) config('services.aivteam.base_url'), '/').'/api/gratitude/get/gratitude-by-number/'.rawurlencode($this->gratitudeNumber));
-        } catch (\Throwable) {
-            return [];
-        }
-
-        return $response->successful()
-            ? self::extractGuestsData($response->json())
-            : [];
     }
 
     public static function extractGuestsData(mixed $payload): array

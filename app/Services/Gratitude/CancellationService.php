@@ -100,6 +100,64 @@ class CancellationService
         GratitudeService::syncAccountBalance($gratitudeNumber);
     }
 
+    public function removeForSource(Model $source): void
+    {
+        DB::transaction(function () use ($source) {
+            $sourceType = get_class($source);
+            $sourceId = $source->getKey();
+
+            Cancellation::where('gratitudeNumber', $source->gratitudeNumber)
+                ->get()
+                ->each(function (Cancellation $cancel) use ($source, $sourceType, $sourceId) {
+                    $allocations = $cancel->points_breakdown ?? [];
+
+                    if ($allocations === []) {
+                        if ((int) $source->cancel_id === (int) $cancel->id) {
+                            $cancel->delete();
+                        }
+
+                        return;
+                    }
+
+                    $remainingAllocations = [];
+                    $removed = false;
+
+                    foreach ($allocations as $allocation) {
+                        $matchesSource = ($allocation['source_type'] ?? null) === $sourceType
+                            && (int) ($allocation['source_id'] ?? 0) === (int) $sourceId;
+
+                        if ($matchesSource) {
+                            $removed = true;
+
+                            continue;
+                        }
+
+                        $remainingAllocations[] = $allocation;
+                    }
+
+                    if (! $removed) {
+                        return;
+                    }
+
+                    if ($remainingAllocations === []) {
+                        $cancel->delete();
+
+                        return;
+                    }
+
+                    $cancel->update([
+                        'points' => collect($remainingAllocations)->sum(fn ($allocation) => (int) ($allocation['points'] ?? 0)),
+                        'points_breakdown' => array_values($remainingAllocations),
+                    ]);
+                });
+
+            $source->forceFill([
+                'cancel_id' => null,
+                'cancelled_points' => 0,
+            ])->save();
+        });
+    }
+
     private function cancelFromQueue(string $gratitudeNumber, int $pointsToCancel, Cancellation $cancel): array
     {
         $remaining = $pointsToCancel;

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import axios from 'axios';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +14,7 @@ const props = defineProps({
 const emit = defineEmits(['saved']);
 const isOpen = ref(false);
 const toDateInput = (val: string | null | undefined) => val ? val.split('T')[0] : '';
+const hasCancellation = computed(() => Number(props.point.cancelled_points || 0) > 0 || !!props.point.cancel_id);
 
 const form = ref({
     date: toDateInput(props.point.usable_date || props.point.useable_date || props.point.date),
@@ -48,11 +49,16 @@ const submit = async () => {
 
 <template>
     <div>
-        <Button @click="isOpen = true" variant="outline" size="sm">Edit</Button>
+        <Button @click="isOpen = true" variant="outline" size="sm">
+            {{ hasCancellation ? 'Restore & Edit' : 'Edit' }}
+        </Button>
 
         <div v-if="isOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 text-left px-4">
             <div class="bg-card w-full max-w-md p-6 rounded-lg shadow-lg border border-border">
-                <h2 class="text-xl font-bold mb-4">Update Bonus Points</h2>
+                <h2 class="text-xl font-bold mb-4">{{ hasCancellation ? 'Restore and Update Bonus Points' : 'Update Bonus Points' }}</h2>
+                <div v-if="hasCancellation" class="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-300">
+                    Saving will remove the cancellation from this entry first, then apply the points, date, and expiry shown below.
+                </div>
                 <form @submit.prevent="submit" class="space-y-4">
                     <div>
                         <Label>Effective Date</Label>
@@ -73,7 +79,7 @@ const submit = async () => {
                     </div>
                     <div class="flex justify-end space-x-2 mt-6">
                         <Button type="button" variant="outline" @click="isOpen = false">Cancel</Button>
-                        <Button type="submit">Update</Button>
+                        <Button type="submit">{{ hasCancellation ? 'Restore & Update' : 'Update' }}</Button>
                     </div>
                 </form>
             </div>

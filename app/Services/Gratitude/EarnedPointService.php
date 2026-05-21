@@ -6,10 +6,14 @@ use App\Models\Gratitude\Cancellation;
 use App\Models\Gratitude\EarnedPoint;
 use App\Models\Gratitude\Gratitude;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 
 class EarnedPointService
 {
-    public function __construct(protected PointExpiryService $pointExpiryService) {}
+    public function __construct(
+        protected PointExpiryService $pointExpiryService,
+        protected CancellationService $cancellationService,
+    ) {}
 
     public function add(Gratitude $gratitude, array $data): EarnedPoint
     {
@@ -40,42 +44,49 @@ class EarnedPointService
 
     public function update(EarnedPoint $point, Gratitude $gratitude, array $data): EarnedPoint
     {
-        $earningType = $this->earningType($data);
-        $usableDate = $this->effectiveDate($data, $earningType);
-        $level = $this->pointExpiryService->resolveLevelForGratitude($gratitude);
+        $updated = DB::transaction(function () use ($point, $gratitude, $data) {
+            $this->cancellationService->removeForSource($point);
+            $point->refresh();
 
-        // Determine expiry: if manually provided → use it.
-        // If already manually set and not provided → keep existing.
-        // Otherwise → recalculate from level.
-        if (! empty($data['expires_at'])) {
-            $expiresAt = Carbon::parse($data['expires_at']);
-            $isManual = true;
-        } elseif ($point->expires_at_manual) {
-            $expiresAt = $point->expires_at;
-            $isManual = true;
-        } else {
-            $expiresAt = $this->pointExpiryService->calculateEarnedExpiry($usableDate, $level);
-            $isManual = false;
-        }
+            $earningType = $this->earningType($data);
+            $usableDate = $this->effectiveDate($data, $earningType);
+            $level = $this->pointExpiryService->resolveLevelForGratitude($gratitude);
 
-        $point->update([
-            'date' => $usableDate,
-            'category' => $data['category'],
-            'points' => $data['points'],
-            'amount' => $data['amount'],
-            'description' => $data['description'],
-            'journey_id' => $data['journey_id'] ?? null,
-            'points_breakdown' => $this->pointsBreakdown($data, $usableDate),
-            'usable_date' => $usableDate,
-            'expires_at' => $expiresAt,
-            'expires_at_manual' => $isManual,
-            'status' => true,
-            'project_data' => $earningType === 'journey' ? ($data['project_data'] ?? $point->project_data) : null,
-        ]);
+            // Determine expiry: if manually provided → use it.
+            // If already manually set and not provided → keep existing.
+            // Otherwise → recalculate from level.
+            if (! empty($data['expires_at'])) {
+                $expiresAt = Carbon::parse($data['expires_at']);
+                $isManual = true;
+            } elseif ($point->expires_at_manual) {
+                $expiresAt = $point->expires_at;
+                $isManual = true;
+            } else {
+                $expiresAt = $this->pointExpiryService->calculateEarnedExpiry($usableDate, $level);
+                $isManual = false;
+            }
+
+            $point->update([
+                'date' => $usableDate,
+                'category' => $data['category'],
+                'points' => $data['points'],
+                'amount' => $data['amount'],
+                'description' => $data['description'],
+                'journey_id' => $data['journey_id'] ?? null,
+                'points_breakdown' => $this->pointsBreakdown($data, $usableDate),
+                'usable_date' => $usableDate,
+                'expires_at' => $expiresAt,
+                'expires_at_manual' => $isManual,
+                'status' => true,
+                'project_data' => $earningType === 'journey' ? ($data['project_data'] ?? $point->project_data) : null,
+            ]);
+
+            return $point->fresh();
+        });
 
         GratitudeService::syncAccountBalance($gratitude->gratitudeNumber);
 
-        return $point->fresh();
+        return $updated;
     }
 
     public function delete(EarnedPoint $point): void

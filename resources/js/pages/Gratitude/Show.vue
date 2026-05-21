@@ -126,6 +126,27 @@ const formatDate = (date: any, fallback = 'N/A') => {
 
     return parsed.toISOString().split('T')[0];
 };
+const guestOwnership = (guest: any) => String(
+    guest?.ownership
+    || guest?.gratitude_ownership
+    || guest?.gratitudeOwnership
+    || guest?.role
+    || guest?.type
+    || ''
+).toLowerCase();
+const isPrimaryGuest = (guest: any) => guestOwnership(guest) === 'primary' || guest?.is_primary === true || guest?.isPrimary === true;
+const guestDisplayName = (guest: any) => {
+    const name = [
+        guest?.preferred_name,
+        guest?.first_name,
+        guest?.last_name,
+    ].filter(Boolean).join(' ').trim();
+
+    return name || guest?.name || guest?.full_name || guest?.email || 'Unnamed guest';
+};
+const guestKey = (guest: any, index: number) => guest?.guest_id || guest?.guestId || guest?.id || guest?.email || `guest-${index}`;
+const primaryGuests = computed(() => (data.value.guests || []).filter((guest: any) => isPrimaryGuest(guest)));
+const secondaryGuests = computed(() => (data.value.guests || []).filter((guest: any) => !isPrimaryGuest(guest)));
 
 // Combine Tier Points + Cancellations
 const combinedTierPoints = computed(() => {
@@ -431,18 +452,35 @@ const exportPointsHistoryPdf = () => openPointsHistoryPrintWindow();
             <Card v-if="data.gratitude" class="shadow-sm border-border overflow-hidden mb-8 bg-gradient-to-r from-card to-muted/10">
                 <div class="px-6 flex flex-col xl:flex-row xl:items-center justify-between gap-6">
                     <!-- Guests -->
-                    <div class="flex flex-wrap items-center gap-3">
+                    <div class="min-w-0 flex-1 space-y-3">
                         <template v-if="data.guests && data.guests.length">
-                            <div
-                                v-for="guest in data.guests"
-                                :key="guest.guest_id"
-                                :class="guest.gratitude_ownership === 'primary'
-                                    ? 'bg-blue-600/10 border-blue-600/20 text-blue-700 dark:text-blue-400 hover:bg-blue-600/20'
-                                    : 'bg-emerald-600/10 border-emerald-600/20 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-600/20'"
-                                class="border px-4 py-1.5 rounded-full flex items-center gap-2 shadow-sm transition-colors"
-                            >
-                                <span class="text-[0.65rem] uppercase tracking-wider opacity-90 font-bold">{{ guest.gratitude_ownership }}</span>
-                                <span class="font-bold text-sm">{{ guest.preferred_name || guest.first_name }} {{ guest.last_name }}</span>
+                            <div class="space-y-1.5">
+                                <p class="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Primary Guest</p>
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <div
+                                        v-for="(guest, index) in primaryGuests"
+                                        :key="guestKey(guest, index)"
+                                        class="border border-blue-600/20 bg-blue-600/10 px-4 py-1.5 rounded-full flex items-center gap-2 shadow-sm text-blue-700 dark:text-blue-400"
+                                    >
+                                        <span class="font-bold text-sm">{{ guestDisplayName(guest) }}</span>
+                                        <span v-if="guest.email" class="text-xs opacity-75">{{ guest.email }}</span>
+                                    </div>
+                                    <span v-if="primaryGuests.length === 0" class="text-sm text-muted-foreground italic">Not set</span>
+                                </div>
+                            </div>
+                            <div class="space-y-1.5">
+                                <p class="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Secondary Guests</p>
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <div
+                                        v-for="(guest, index) in secondaryGuests"
+                                        :key="guestKey(guest, index)"
+                                        class="border border-emerald-600/20 bg-emerald-600/10 px-4 py-1.5 rounded-full flex items-center gap-2 shadow-sm text-emerald-700 dark:text-emerald-400"
+                                    >
+                                        <span class="font-bold text-sm">{{ guestDisplayName(guest) }}</span>
+                                        <span v-if="guest.email" class="text-xs opacity-75">{{ guest.email }}</span>
+                                    </div>
+                                    <span v-if="secondaryGuests.length === 0" class="text-sm text-muted-foreground italic">None</span>
+                                </div>
                             </div>
                         </template>
                         <span v-else class="text-sm text-muted-foreground italic">No guests found</span>
@@ -955,22 +993,21 @@ const exportPointsHistoryPdf = () => openPointsHistoryPrintWindow();
                                     <template v-for="item in combinedTierPoints" :key="item.rowType + '-' + item.id">
                                         <tr class="hover:bg-muted/30 transition-colors"
                                             :class="{
-                                                'bg-red-50/40 dark:bg-red-950/20 border-l-2 border-l-destructive': item.hasCancellation,
-                                                'opacity-60': item.isFullyCancelled
+                                                'bg-rose-50/90 dark:bg-rose-950/30 border-l-4 border-l-rose-500': item.hasCancellation || item.rowType === 'cancel'
                                             }">
                                             <td class="whitespace-nowrap px-6 py-4 text-sm font-medium text-foreground">
-                                                <span :class="{'line-through text-muted-foreground': item.isFullyCancelled}">
+                                                <span>
                                                     {{ formatDate(item.displayDate, '') }}
                                                 </span>
                                             </td>
                                             <td class="whitespace-nowrap px-6 py-4">
-                                                <div class="text-sm font-bold" :class="{'line-through text-muted-foreground': item.isFullyCancelled, 'text-foreground/90': !item.isFullyCancelled}">
+                                                <div class="text-sm font-bold text-foreground/90">
                                                     <span v-if="item.rowType === 'cancel'" class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-destructive/10 text-destructive border border-destructive/30 mr-1.5">Cancellation</span>
                                                     {{ item.displayProject }}
                                                 </div>
                                                 <div v-if="item.displaySubtitle" class="text-xs text-muted-foreground mt-0.5">{{ item.displaySubtitle }}</div>
                                             </td>
-                                            <td class="whitespace-nowrap px-6 py-4 text-sm font-bold" :class="item.isFullyCancelled ? 'text-destructive line-through' : item.rowType === 'cancel' ? 'text-destructive' : 'text-foreground'">
+                                            <td class="whitespace-nowrap px-6 py-4 text-sm font-bold" :class="item.hasCancellation || item.rowType === 'cancel' ? 'text-destructive' : 'text-foreground'">
                                                 <template v-if="item.rowType === 'cancel'">-{{ formatNumber(item.displayPoints) }}</template>
                                                 <template v-else>{{ formatNumber(item.displayPoints) }}</template>
                                             </td>
@@ -982,7 +1019,7 @@ const exportPointsHistoryPdf = () => openPointsHistoryPrintWindow();
                                                 <template v-if="item.rowType !== 'cancel'">{{ formatNumber(pointCancelled(item)) }}</template>
                                                 <span v-else class="text-muted-foreground">—</span>
                                             </td>
-                                            <td class="whitespace-nowrap px-6 py-4 text-sm font-bold" :class="item.isFullyCancelled ? 'text-muted-foreground' : 'text-green-600 dark:text-green-400'">
+                                            <td class="whitespace-nowrap px-6 py-4 text-sm font-bold" :class="item.hasCancellation ? 'text-destructive' : 'text-green-600 dark:text-green-400'">
                                                 <template v-if="item.rowType !== 'cancel'">{{ formatNumber(pointRemaining(item)) }}</template>
                                                 <span v-else class="text-muted-foreground">—</span>
                                             </td>
@@ -995,13 +1032,13 @@ const exportPointsHistoryPdf = () => openPointsHistoryPrintWindow();
                                                 <span v-else class="text-muted-foreground text-xs">—</span>
                                             </td>
                                             <td class="whitespace-nowrap px-6 py-4 text-sm text-foreground/80">
-                                                <span v-if="item.displayExpiresOn || item.expires_at" :class="{'line-through text-muted-foreground': item.isFullyCancelled}">
+                                                <span v-if="item.displayExpiresOn || item.expires_at">
                                                     {{ new Date(item.displayExpiresOn || item.expires_at).toISOString().split('T')[0] }}
                                                     <span v-if="item.expires_at_manual" class="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-violet-100 text-violet-700 dark:bg-violet-950/40 dark:text-violet-400 border border-violet-300/50">Manual</span>
                                                 </span>
                                             </td>
                                             <td class="px-6 py-4 text-sm">
-                                                <span :class="item.isFullyCancelled ? 'text-muted-foreground line-through text-xs' : 'text-foreground/80'">{{ item.displayDescription }}</span>
+                                                <span class="text-foreground/80">{{ item.displayDescription }}</span>
                                                 <!-- Inline cancellation block for rows with cancel_id -->
                                                 <div v-if="item.cancellationData && item.cancellationsList.length === 0" class="mt-1.5 flex items-start gap-1.5 bg-red-50 dark:bg-red-950/30 border border-red-200/60 dark:border-red-800/40 rounded px-2 py-1">
                                                     <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-destructive text-white shrink-0 mt-0.5">Cancelled</span>
@@ -1134,11 +1171,10 @@ const exportPointsHistoryPdf = () => openPointsHistoryPrintWindow();
                                     <template v-for="point in combinedBonusPoints" :key="point.id">
                                         <tr class="hover:bg-muted/30 transition-colors"
                                             :class="{
-                                                'bg-red-50/40 dark:bg-red-950/20 border-l-2 border-l-destructive': point.hasCancellation,
-                                                'opacity-60': point.isFullyCancelled
+                                                'bg-rose-50/90 dark:bg-rose-950/30 border-l-4 border-l-rose-500': point.hasCancellation
                                             }">
                                             <td class="whitespace-nowrap px-6 py-4 text-sm font-medium text-foreground">
-                                                <span :class="{'line-through text-muted-foreground': point.isFullyCancelled}">
+                                                <span>
                                                     {{ formatDate(point.displayDate || effectiveDateValue(point)) }}
                                                 </span>
                                             </td>
@@ -1146,8 +1182,7 @@ const exportPointsHistoryPdf = () => openPointsHistoryPrintWindow();
                                                 <template v-if="point.expires_at">
                                                     <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider"
                                                         :class="[
-                                                            new Date(point.expires_at) < new Date() ? 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400',
-                                                            point.isFullyCancelled ? 'opacity-50 line-through' : ''
+                                                            new Date(point.expires_at) < new Date() ? 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400'
                                                         ]">
                                                         {{ new Date(point.expires_at).toISOString().split('T')[0] }}
                                                     </span>
@@ -1156,7 +1191,7 @@ const exportPointsHistoryPdf = () => openPointsHistoryPrintWindow();
                                                 <span v-else class="text-muted-foreground text-xs">No Expiry</span>
                                             </td>
                                             <td class="px-6 py-4 text-sm">
-                                                <span :class="point.isFullyCancelled ? 'text-muted-foreground line-through text-xs' : 'text-foreground/80'">
+                                                <span class="text-foreground/80">
                                                     {{ point.description || point.category }}
                                                 </span>
                                                 <!-- Inline cancellation block -->
@@ -1181,10 +1216,10 @@ const exportPointsHistoryPdf = () => openPointsHistoryPrintWindow();
                                                     </div>
                                                 </div>
                                             </td>
-                                            <td class="whitespace-nowrap px-6 py-4 text-sm font-bold" :class="point.isFullyCancelled ? 'text-destructive line-through' : 'text-foreground'">{{ formatNumber(point.points) }}</td>
+                                            <td class="whitespace-nowrap px-6 py-4 text-sm font-bold" :class="point.hasCancellation ? 'text-destructive' : 'text-foreground'">{{ formatNumber(point.points) }}</td>
                                             <td class="whitespace-nowrap px-6 py-4 text-sm font-medium text-amber-600 dark:text-amber-400">{{ formatNumber(point.redeemed_points || 0) }}</td>
                                             <td class="whitespace-nowrap px-6 py-4 text-sm font-medium text-destructive">{{ formatNumber(pointCancelled(point)) }}</td>
-                                            <td class="whitespace-nowrap px-6 py-4 text-sm font-bold" :class="point.isFullyCancelled ? 'text-muted-foreground' : 'text-green-600 dark:text-green-400'">{{ formatNumber(pointRemaining(point)) }}</td>
+                                            <td class="whitespace-nowrap px-6 py-4 text-sm font-bold" :class="point.hasCancellation ? 'text-destructive' : 'text-green-600 dark:text-green-400'">{{ formatNumber(pointRemaining(point)) }}</td>
                                             <td class="whitespace-nowrap px-6 py-4 text-sm font-bold">
                                                 <template v-if="point.isExpired">
                                                     <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-400">

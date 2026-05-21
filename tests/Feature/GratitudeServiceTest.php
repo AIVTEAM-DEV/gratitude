@@ -12,7 +12,9 @@ use App\Models\Gratitude\GratitudeEarnedBenefit;
 use App\Models\Gratitude\GratitudeLevel;
 use App\Models\Gratitude\RedeemPoints;
 use App\Models\User;
+use App\Services\Gratitude\BonusPointService;
 use App\Services\Gratitude\CancellationService;
+use App\Services\Gratitude\EarnedPointService;
 use App\Services\Gratitude\GratitudeService;
 use App\Services\Gratitude\PointService;
 use App\Services\Gratitude\TierService;
@@ -427,6 +429,93 @@ class GratitudeServiceTest extends TestCase
         $this->assertNull($point->cancel_id);
     }
 
+    public function test_updating_cancelled_earned_point_removes_cancellation_first()
+    {
+        $gratitude = Gratitude::where('gratitudeNumber', $this->gratitudeNumber)->firstOrFail();
+        $point = EarnedPoint::create([
+            'gratitudeNumber' => $this->gratitudeNumber,
+            'date' => Carbon::parse('2026-01-01'),
+            'usable_date' => Carbon::parse('2026-01-01'),
+            'points' => 100,
+            'amount' => 100,
+            'category' => 'manual',
+            'description' => 'Original earned entry',
+            'status' => 'active',
+        ]);
+
+        app(CancellationService::class)->cancel($gratitude, [
+            'date' => '2026-01-05',
+            'cancellation_reason' => 'Original cancellation',
+            'cancellation_points' => 100,
+        ], $point->id);
+
+        $point->refresh();
+        $this->assertEquals(100, $point->cancelled_points);
+        $this->assertNotNull($point->cancel_id);
+
+        $updated = app(EarnedPointService::class)->update($point, $gratitude, [
+            'earning_type' => 'other',
+            'date' => '2026-02-10',
+            'category' => 'manual_adjustment',
+            'points' => 250,
+            'amount' => 250,
+            'description' => 'Updated earned entry',
+        ]);
+
+        $this->assertNull($updated->cancel_id);
+        $this->assertEquals(0, $updated->cancelled_points);
+        $this->assertEquals(250, $updated->points);
+        $this->assertEquals('2026-02-10', $updated->date->toDateString());
+        $this->assertDatabaseMissing('cancellations', [
+            'gratitudeNumber' => $this->gratitudeNumber,
+            'description' => 'Original cancellation',
+        ]);
+    }
+
+    public function test_updating_cancelled_bonus_point_removes_cancellation_first()
+    {
+        $gratitude = Gratitude::where('gratitudeNumber', $this->gratitudeNumber)->firstOrFail();
+        $point = BonusPoint::create([
+            'gratitudeNumber' => $this->gratitudeNumber,
+            'date' => Carbon::parse('2026-01-01'),
+            'usable_date' => Carbon::parse('2026-01-01'),
+            'points' => 100,
+            'amount' => 100,
+            'category' => 'manual',
+            'type' => 'other',
+            'description' => 'Original bonus entry',
+            'status' => true,
+        ]);
+
+        app(CancellationService::class)->cancel($gratitude, [
+            'date' => '2026-01-05',
+            'cancellation_reason' => 'Original bonus cancellation',
+            'cancellation_points' => 100,
+        ], null, $point->id);
+
+        $point->refresh();
+        $this->assertEquals(100, $point->cancelled_points);
+        $this->assertNotNull($point->cancel_id);
+
+        $updated = app(BonusPointService::class)->update($point, $gratitude, [
+            'type' => 'other',
+            'date' => '2026-03-12',
+            'category' => 'service_bonus',
+            'points' => 300,
+            'amount' => 300,
+            'description' => 'Updated bonus entry',
+        ]);
+
+        $this->assertNull($updated->cancel_id);
+        $this->assertEquals(0, $updated->cancelled_points);
+        $this->assertEquals(300, $updated->points);
+        $this->assertEquals('2026-03-12', $updated->date->toDateString());
+        $this->assertDatabaseMissing('cancellations', [
+            'gratitudeNumber' => $this->gratitudeNumber,
+            'description' => 'Original bonus cancellation',
+        ]);
+    }
+
     public function test_partner_redemption_uses_partner_points_per_dollar_rate()
     {
         GratitudeLevel::where('name', 'Explorer')->update([
@@ -572,6 +661,68 @@ class GratitudeServiceTest extends TestCase
         $this->assertEquals($firstPoint->id, $redemption->details->first()->source_id);
     }
 
+    public function test_imported_redemptions_use_original_date_field_instead_of_import_date()
+    {
+        $gratitudeNumber = 'G-IMPORT-REDEEM-DATE-FIELD';
+
+        Carbon::setTestNow(Carbon::parse('2026-04-01 12:00:00'));
+
+        try {
+            $this->gratitudeService->import([
+                [
+                    'id' => 994,
+                    'gratitudeNumber' => $gratitudeNumber,
+                    'earnedPoints' => [
+                        [
+                            'id' => 1101,
+                            'gratitudeNumber' => $gratitudeNumber,
+                            'points' => 500,
+                            'redeemed_points' => 0,
+                            'date' => '2026-01-01 00:00:00',
+                            'description' => 'First usable batch',
+                            'status' => 'active',
+                        ],
+                        [
+                            'id' => 1102,
+                            'gratitudeNumber' => $gratitudeNumber,
+                            'points' => 500,
+                            'redeemed_points' => 0,
+                            'date' => '2026-03-01 00:00:00',
+                            'description' => 'Later usable batch',
+                            'status' => 'active',
+                        ],
+                    ],
+                    'redeemPoints' => [
+                        [
+                            'id' => 2101,
+                            'gratitudeNumber' => $gratitudeNumber,
+                            'points' => 600,
+                            'amount' => 600,
+                            'category' => 'partner',
+                            'description' => 'Imported redemption with legacy date',
+                            'status' => 'approved',
+                            'date' => '2026-02-01 10:00:00',
+                        ],
+                    ],
+                ],
+            ]);
+        } finally {
+            Carbon::setTestNow();
+        }
+
+        $redemption = RedeemPoints::with('details.source')
+            ->where('gratitudeNumber', $gratitudeNumber)
+            ->firstOrFail();
+        $firstPoint = EarnedPoint::where('old_id', 1101)->firstOrFail();
+        $secondPoint = EarnedPoint::where('old_id', 1102)->firstOrFail();
+
+        $this->assertEquals('2026-02-01', $redemption->created_at->toDateString());
+        $this->assertEquals('2026-02-01', $redemption->points_breakdown['redemption_date']);
+        $this->assertEquals(100, $redemption->points_breakdown['unallocated_points']);
+        $this->assertEquals(500, $firstPoint->redeemed_points);
+        $this->assertEquals(0, $secondPoint->redeemed_points);
+    }
+
     public function test_import_skips_legacy_negative_expiration_rows()
     {
         $gratitudeNumber = 'G-IMPORT-EXPIRY';
@@ -645,6 +796,26 @@ class GratitudeServiceTest extends TestCase
         ]);
     }
 
+    public function test_import_defaults_null_account_status_to_active()
+    {
+        $gratitudeNumber = 'G-IMPORT-NULL-STATUS';
+
+        $this->gratitudeService->import([
+            [
+                'id' => 991,
+                'gratitudeNumber' => $gratitudeNumber,
+                'status' => null,
+            ],
+        ]);
+
+        $this->assertDatabaseHas('gratitudes', [
+            'old_id' => 991,
+            'gratitudeNumber' => $gratitudeNumber,
+            'status' => 'active',
+            'is_active' => true,
+        ]);
+    }
+
     public function test_internal_import_fetches_detail_payloads_for_summary_gratitudes()
     {
         config([
@@ -668,7 +839,7 @@ class GratitudeServiceTest extends TestCase
         ];
 
         Http::fake([
-            'https://aivteam.test/api/gratitude/get/gratitude-data-all/gratitude' => Http::response([$summary]),
+            'https://aivteam.test/api/gratitude/get/gratitude-data-all-by-status/gratitude/active' => Http::response([$summary]),
             'https://aivteam.test/api/get/all/journeys' => Http::response([
                 ['id' => 501, 'endDate' => '2026-01-10'],
             ]),
@@ -736,14 +907,23 @@ class GratitudeServiceTest extends TestCase
             ]),
         ]);
 
-        $response = $this->actingAs($this->user)->getJson('/internal-api/gratitude/migrate-data');
+        $summaryResponse = $this->actingAs($this->user)->getJson('/internal-api/gratitude/migrate-data/active');
+
+        $summaryResponse
+            ->assertOk()
+            ->assertJsonPath('import_status', 'active')
+            ->assertJsonPath('summary_accounts', 1)
+            ->assertJsonPath('imported_accounts', 1);
+
+        $response = $this->actingAs($this->user)->getJson('/internal-api/gratitude/migrate-account-data/active');
 
         $response
             ->assertOk()
-            ->assertJsonPath('summary_accounts', 1)
+            ->assertJsonPath('import_status', 'active')
             ->assertJsonPath('detailed_accounts', 1)
             ->assertJsonPath('detail_failures', 0);
 
+        Http::assertSent(fn ($request) => $request->url() === 'https://aivteam.test/api/gratitude/get/gratitude-data-all-by-status/gratitude/active');
         Http::assertSent(fn ($request) => $request->url() === 'https://aivteam.test/api/gratitude/get/gratitude-data-all/gratitude/G0005');
         Http::assertSent(fn ($request) => $request->url() === 'https://aivteam.test/api/gratitude/get/gratitude-by-number/G0005');
 
@@ -771,6 +951,67 @@ class GratitudeServiceTest extends TestCase
                 'ownership' => 'primary',
             ],
         ], $gratitude->guests_data);
+    }
+
+    public function test_internal_import_fetches_inactive_summary_endpoint()
+    {
+        config([
+            'services.aivteam.base_url' => 'https://aivteam.test',
+            'services.aivteam.access_token' => 'test-token',
+        ]);
+
+        $summary = [
+            'id' => 77,
+            'old_id' => 77,
+            'gratitudeNumber' => 'G0006',
+            'totalPoints' => 500,
+            'useablePoints' => 200,
+            'level' => 'Explorer',
+            'status' => 'inactive',
+            'importStatus' => 1,
+        ];
+
+        Http::fake([
+            'https://aivteam.test/api/gratitude/get/gratitude-data-all-by-status/gratitude/inactive' => Http::response([$summary]),
+            'https://aivteam.test/api/get/all/journeys' => Http::response([]),
+            'https://aivteam.test/api/gratitude/get/gratitude-data-all/gratitude/G0006' => Http::response([
+                'status' => true,
+                'data' => [
+                    'gratitude' => $summary,
+                    'cancellationPoints' => [],
+                    'earnedPoints' => [],
+                    'bonusPoints' => [],
+                    'redeemPoints' => [],
+                ],
+            ]),
+            'https://aivteam.test/api/gratitude/get/gratitude-by-number/G0006' => Http::response(['data' => ['guests' => []]]),
+        ]);
+
+        $summaryResponse = $this->actingAs($this->user)->getJson('/internal-api/gratitude/migrate-data/inactive');
+
+        $summaryResponse
+            ->assertOk()
+            ->assertJsonPath('import_status', 'inactive')
+            ->assertJsonPath('summary_accounts', 1)
+            ->assertJsonPath('imported_accounts', 1);
+
+        $response = $this->actingAs($this->user)->getJson('/internal-api/gratitude/migrate-account-data/inactive');
+
+        $response
+            ->assertOk()
+            ->assertJsonPath('import_status', 'inactive')
+            ->assertJsonPath('summary_accounts', 1)
+            ->assertJsonPath('detailed_accounts', 1);
+
+        Http::assertSent(fn ($request) => $request->url() === 'https://aivteam.test/api/gratitude/get/gratitude-data-all-by-status/gratitude/inactive');
+        Http::assertSent(fn ($request) => $request->url() === 'https://aivteam.test/api/gratitude/get/gratitude-data-all/gratitude/G0006');
+
+        $this->assertDatabaseHas('gratitudes', [
+            'old_id' => 77,
+            'gratitudeNumber' => 'G0006',
+            'status' => 'inactive',
+            'is_active' => false,
+        ]);
     }
 
     public function test_import_turns_legacy_negative_non_expiry_rows_into_cancellations()

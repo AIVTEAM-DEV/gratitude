@@ -37,7 +37,10 @@ const columns = [
 
 const gratitudePoints = ref<any[]>([]);
 const loading = ref(true);
-const importing = ref(false);
+type ImportStatus = 'active' | 'inactive';
+type ImportKind = 'gratitudes' | 'accounts';
+
+const importingAction = ref<string | null>(null);
 const filterOptions = ref<{ levels: any[]; about_to_expire_days?: number }>({ levels: [], about_to_expire_days: 30 });
 const filters = ref({
     status: '',
@@ -111,19 +114,29 @@ const exportAccounts = (format: ExportFormat) => {
     window.open(url, '_blank', format === 'print' ? 'width=1200,height=800' : undefined);
 };
 
-const handleApiImport = async () => {
-    if (!window.confirm('Are you sure you want to pull the latest data from the API?')) return;
-    
-    importing.value = true;
+const importActionKey = (kind: ImportKind, status: ImportStatus) => `${kind}:${status}`;
+
+const isImporting = (kind: ImportKind, status: ImportStatus) => importingAction.value === importActionKey(kind, status);
+
+const handleApiImport = async (kind: ImportKind, status: ImportStatus) => {
+    const label = status.charAt(0).toUpperCase() + status.slice(1);
+    const targetLabel = kind === 'gratitudes' ? 'gratitude table' : 'account data';
+    const endpoint = kind === 'gratitudes'
+        ? `/internal-api/gratitude/migrate-data/${status}`
+        : `/internal-api/gratitude/migrate-account-data/${status}`;
+
+    if (!window.confirm(`Are you sure you want to import ${label.toLowerCase()} ${targetLabel} from the API?`)) return;
+
+    importingAction.value = importActionKey(kind, status);
     try {
-        await axios.get('/internal-api/gratitude/migrate-data');
+        await axios.get(endpoint);
         await fetchAccountsData();
-        window.alert('Data imported successfully!');
+        window.alert(`${label} ${targetLabel} imported successfully!`);
     } catch (e) {
         console.error(e);
-        window.alert('Failed to import data from API.');
+        window.alert(`Failed to import ${status} ${targetLabel} from API.`);
     } finally {
-        importing.value = false;
+        importingAction.value = null;
     }
 };
 
@@ -230,9 +243,21 @@ const recalculateLevel = async (gratitudeNumber: string) => {
                         <Printer class="mr-2 h-4 w-4" />
                         Print
                     </Button>
-                    <Button variant="default" @click="handleApiImport" :disabled="importing">
+                    <Button variant="default" @click="handleApiImport('gratitudes', 'active')" :disabled="importingAction !== null">
                         <Upload class="mr-2 h-4 w-4" />
-                        {{ importing ? 'Importing from API...' : 'Import Data from API' }}
+                        {{ isImporting('gratitudes', 'active') ? 'Importing Active Gratitudes...' : 'Import Active Gratitudes' }}
+                    </Button>
+                    <Button variant="outline" @click="handleApiImport('gratitudes', 'inactive')" :disabled="importingAction !== null">
+                        <Upload class="mr-2 h-4 w-4" />
+                        {{ isImporting('gratitudes', 'inactive') ? 'Importing Inactive Gratitudes...' : 'Import Inactive Gratitudes' }}
+                    </Button>
+                    <Button variant="secondary" @click="handleApiImport('accounts', 'active')" :disabled="importingAction !== null">
+                        <Upload class="mr-2 h-4 w-4" />
+                        {{ isImporting('accounts', 'active') ? 'Importing Active Account Data...' : 'Import Active Account Data' }}
+                    </Button>
+                    <Button variant="outline" @click="handleApiImport('accounts', 'inactive')" :disabled="importingAction !== null">
+                        <Upload class="mr-2 h-4 w-4" />
+                        {{ isImporting('accounts', 'inactive') ? 'Importing Inactive Account Data...' : 'Import Inactive Account Data' }}
                     </Button>
                 </div>
             </div>

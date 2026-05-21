@@ -11,7 +11,15 @@ use Illuminate\Support\Facades\Route;
 
 Route::name('gratitude.')->prefix('gratitude/')
     ->group(function () {
-        Route::get('migrate-data', [GratitudeController::class, 'import'])->name('import');
+        Route::get('migrate-data/{status?}', [GratitudeController::class, 'import'])
+            ->whereIn('status', ['active', 'inactive'])
+            ->name('import');
+        Route::get('migrate-gratitudes/{status?}', [GratitudeController::class, 'importGratitude'])
+            ->whereIn('status', ['active', 'inactive'])
+            ->name('import-gratitudes');
+        Route::get('migrate-account-data/{status?}', [GratitudeController::class, 'importAccountsDataByStatus'])
+            ->whereIn('status', ['active', 'inactive'])
+            ->name('import-account-data');
         Route::get('/', [GratitudeController::class, 'apiIndex'])->name('index');
         Route::get('accounts/export/{format}', [GratitudeController::class, 'apiExportAccounts'])
             ->whereIn('format', ['pdf', 'excel', 'print'])

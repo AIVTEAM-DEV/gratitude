@@ -81,7 +81,7 @@ class GratitudeService
             ->pluck('gratitudeNumber');
 
         $highestNumber = $numbers->reduce(function (int $highest, ?string $gratitudeNumber) use ($prefix) {
-            if (! $gratitudeNumber || ! preg_match('/^'.preg_quote($prefix, '/').'(\d+)$/', $gratitudeNumber, $matches)) {
+            if (! $gratitudeNumber || ! preg_match('/^' . preg_quote($prefix, '/') . '(\d+)$/', $gratitudeNumber, $matches)) {
                 return $highest;
             }
 
@@ -91,7 +91,7 @@ class GratitudeService
         $nextNumber = $highestNumber + 1;
         $padding = max(4, strlen((string) $nextNumber));
 
-        return $prefix.str_pad((string) $nextNumber, $padding, '0', STR_PAD_LEFT);
+        return $prefix . str_pad((string) $nextNumber, $padding, '0', STR_PAD_LEFT);
     }
 
     public function import(array $data, array $journeysMap = []): void
@@ -258,6 +258,12 @@ class GratitudeService
             if (isset($record['redeemPoints']) && is_array($record['redeemPoints'])) {
                 foreach ($record['redeemPoints'] as $rp) {
                     $cancel_id = $this->resolveCancelId($rp['cancel_id'] ?? null);
+                    $redemptionDate = $this->importedRedemptionDate($rp);
+                    $pointsBreakdown = is_array($rp['points_breakdown'] ?? null) ? $rp['points_breakdown'] : [];
+
+                    if ($redemptionDate) {
+                        $pointsBreakdown['imported_redemption_date'] = $redemptionDate->toDateTimeString();
+                    }
 
                     $redemption = RedeemPoints::updateOrCreate(
                         ['old_id' => $rp['id']],
@@ -272,16 +278,18 @@ class GratitudeService
                             'reason' => $rp['description'] ?? 'Imported Redemption',
                             'category' => $rp['category'] ?? $rp['redemption_type'] ?? null,
                             'status' => $rp['status'] ?? null,
-                            'points_breakdown' => $rp['points_breakdown'] ?? null,
+                            'points_breakdown' => $pointsBreakdown ?: null,
                         ]
                     );
 
                     $timestamps = [];
-                    if (! empty($rp['created_at'])) {
-                        $timestamps['created_at'] = Carbon::parse($rp['created_at']);
+                    if ($redemptionDate) {
+                        $timestamps['created_at'] = $redemptionDate;
                     }
                     if (! empty($rp['updated_at'])) {
                         $timestamps['updated_at'] = Carbon::parse($rp['updated_at']);
+                    } elseif ($redemptionDate) {
+                        $timestamps['updated_at'] = $redemptionDate;
                     }
                     if ($timestamps !== []) {
                         $redemption->forceFill($timestamps)->save();
@@ -296,6 +304,107 @@ class GratitudeService
                 self::syncAccountBalance($gratitude->gratitudeNumber);
             }
         }
+    }
+
+    public function importAccountsData(array $data, array $journeysMap = []): void
+    {
+        $this->import($data, $journeysMap);
+    }
+
+    public function importGratitudeTable(array $data): int
+    {
+        $imported = 0;
+
+        foreach ($data as $record) {
+            if (! is_array($record)) {
+                continue;
+            }
+
+            $gratitudeNumber = $record['gratitudeNumber'] ?? null;
+
+            if (! is_scalar($gratitudeNumber) || trim((string) $gratitudeNumber) === '') {
+                continue;
+            }
+
+            $identity = ! empty($record['id'])
+                ? ['old_id' => $record['id']]
+                : ['gratitudeNumber' => (string) $gratitudeNumber];
+            $status = $this->normalizeAccountStatus($record['status'] ?? 'active');
+            $existing = Gratitude::where($identity)->first();
+
+            $gratitudeValues = [
+                'gratitudeNumber' => (string) $gratitudeNumber,
+                'totalPoints' => $record['totalPoints'] ?? 0,
+                'useablePoints' => $record['useablePoints'] ?? 0,
+                'level' => $this->defaultLevelName(),
+                'status' => $status,
+                'statusChange' => null,
+                'importStatus' => $record['importStatus'] ?? 1,
+                'is_active' => $status === 'active',
+                'level_obtained_at' => ! empty($record['level_obtained_at'])
+                    ? Carbon::parse($record['level_obtained_at'])
+                    : null,
+                'expires_at' => ! empty($record['expires_at']) ? Carbon::parse($record['expires_at']) : null,
+                'created_at' => ! empty($record['created_at']) ? Carbon::parse($record['created_at']) : null,
+                'updated_at' => ! empty($record['updated_at']) ? Carbon::parse($record['updated_at']) : null,
+            ];
+
+            if ($this->recordHasGuestPayload($record)) {
+                $gratitudeValues['guests_data'] = $this->gratitudeGuests(
+                    $record['guests'] ?? $record['guests_data'] ?? $record['members'] ?? [],
+                    $existing
+                );
+            }
+
+            Gratitude::updateOrCreate($identity, $gratitudeValues);
+            $imported++;
+        }
+
+        return $imported;
+    }
+
+    public function gratitudeGuests($guests, $gratitude = null): array
+    {
+        $incomingGuests = collect($guests ?? [])
+            ->map(fn($guest) => $this->formatGratitudeGuest($guest))
+            ->filter(fn($guest) => !empty($guest['guest_id']) || !empty($guest['id']))
+            ->values();
+
+        if (!$gratitude) {
+            return $incomingGuests->toArray();
+        }
+
+        $existingGuests = collect($gratitude->guests_data ?? [])
+            ->map(fn($guest) => (array) $guest)
+            ->filter(fn($guest) => !empty($guest['guest_id']) || !empty($guest['id']))
+            ->keyBy(fn($guest) => $guest['guest_id'] ?? $guest['id']);
+
+        foreach ($incomingGuests as $guest) {
+            $key = $guest['guest_id'] ?? $guest['id'];
+
+            $existingGuests->put($key, array_merge(
+                $existingGuests->get($key, []),
+                $guest
+            ));
+        }
+
+        return $existingGuests->values()->toArray();
+    }
+
+    private function formatGratitudeGuest($guest): array
+    {
+        return [
+            'id' => data_get($guest, 'id'),
+            'guest_id' => data_get($guest, 'guest_id'),
+            'first_name' => data_get($guest, 'first_name'),
+            'last_name' => data_get($guest, 'last_name'),
+            'email' => data_get($guest, 'email'),
+            'birthday' => data_get($guest, 'birthday'),
+            'preferred_name' => data_get($guest, 'preferred_name'),
+            'ownership' => data_get($guest, 'ownership'),
+            'gratitudeNumber' => data_get($guest, 'gratitudeNumber'),
+            'gender' => data_get($guest, 'gender'),
+        ];
     }
 
     public function allGratitudes(): Collection
@@ -324,8 +433,8 @@ class GratitudeService
     public function syncAccountBalancesFor(array $gratitudeNumbers): int
     {
         $numbers = collect($gratitudeNumbers)
-            ->filter(fn ($gratitudeNumber) => is_scalar($gratitudeNumber) && trim((string) $gratitudeNumber) !== '')
-            ->map(fn ($gratitudeNumber) => (string) $gratitudeNumber)
+            ->filter(fn($gratitudeNumber) => is_scalar($gratitudeNumber) && trim((string) $gratitudeNumber) !== '')
+            ->map(fn($gratitudeNumber) => (string) $gratitudeNumber)
             ->unique()
             ->values();
 
@@ -370,20 +479,22 @@ class GratitudeService
 
     private function recordHasGuestPayload(array $record): bool
     {
-        foreach ([
-            'guests_data',
-            'guests',
-            'members',
-            'primary_guest',
-            'primaryGuest',
-            'lead_guest',
-            'leadGuest',
-            'secondary_guests',
-            'secondaryGuests',
-            'additional_guests',
-            'additionalGuests',
-            'companions',
-        ] as $key) {
+        foreach (
+            [
+                'guests_data',
+                'guests',
+                'members',
+                'primary_guest',
+                'primaryGuest',
+                'lead_guest',
+                'leadGuest',
+                'secondary_guests',
+                'secondaryGuests',
+                'additional_guests',
+                'additionalGuests',
+                'companions',
+            ] as $key
+        ) {
             if (array_key_exists($key, $record)) {
                 return true;
             }
@@ -468,7 +579,7 @@ class GratitudeService
             $row['description'] ?? null,
             $row['category'] ?? null,
             $row['type'] ?? null,
-        ], fn ($value) => is_scalar($value) && $value !== '')));
+        ], fn($value) => is_scalar($value) && $value !== '')));
 
         return str_contains($text, 'expir');
     }
@@ -676,7 +787,7 @@ class GratitudeService
         $pointsPerDollar = $this->pointsPerDollarForRedemption($level, $redemptionType);
         $calculatedAmount = round($points / $pointsPerDollar, 2);
         $queue = $this->pointLedgerService->redeemableQueue($gratitude->gratitudeNumber, $redemptionDate);
-        $usablePointsAtRedemption = (int) $queue->sum(fn ($segment) => (int) $segment->available_points);
+        $usablePointsAtRedemption = (int) $queue->sum(fn($segment) => (int) $segment->available_points);
         $pointsRemaining = $points;
 
         foreach ($queue as $segment) {
@@ -739,12 +850,24 @@ class GratitudeService
                 'redemption_type' => $redemptionType,
                 'level_at_redemption' => $levelName,
                 'points_per_dollar' => $pointsPerDollar,
+                'redemption_date' => $redemptionDate->toDateString(),
                 'usable_points_at_redemption' => $usablePointsAtRedemption,
                 'calculated_amount' => $calculatedAmount,
                 'unallocated_points' => max(0, $pointsRemaining),
                 'recalculated_from_import' => true,
             ]),
         ]);
+    }
+
+    private function importedRedemptionDate(array $row): ?Carbon
+    {
+        foreach (['date', 'redemption_date', 'redeemed_at', 'created_at', 'updated_at'] as $field) {
+            if (! empty($row[$field])) {
+                return Carbon::parse($row[$field]);
+            }
+        }
+
+        return null;
     }
 
     private function redemptionOccurredAt(RedeemPoints $redemption): Carbon
@@ -757,9 +880,9 @@ class GratitudeService
     private function levelNameAt(Gratitude $gratitude, CarbonInterface $date): string
     {
         $history = collect($gratitude->levelHistory ?? [])
-            ->filter(fn ($entry) => is_array($entry) && ! empty($entry['date']))
-            ->filter(fn ($entry) => Carbon::parse($entry['date'])->lte($date))
-            ->sortBy(fn ($entry) => Carbon::parse($entry['date'])->timestamp)
+            ->filter(fn($entry) => is_array($entry) && ! empty($entry['date']))
+            ->filter(fn($entry) => Carbon::parse($entry['date'])->lte($date))
+            ->sortBy(fn($entry) => Carbon::parse($entry['date'])->timestamp)
             ->values();
 
         if ($history->isNotEmpty()) {
@@ -948,7 +1071,7 @@ class GratitudeService
                     // Strip this redemption's history entry from the segment
                     $history = $source->redemption_history ?? [];
                     $source->redemption_history = array_values(
-                        array_filter($history, fn ($entry) => ($entry['redemption_id'] ?? null) != $id)
+                        array_filter($history, fn($entry) => ($entry['redemption_id'] ?? null) != $id)
                     );
 
                     $source->save();
