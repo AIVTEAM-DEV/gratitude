@@ -54,6 +54,7 @@ class GratitudeController extends Controller
 
     public function importGratitude(?string $status = null)
     {
+        $this->authorizeDeveloperImport();
         $this->prepareLongRunningImport();
 
         $importStatus = $this->normalizeImportStatus($status);
@@ -88,6 +89,7 @@ class GratitudeController extends Controller
 
     public function importAccountsDataByStatus(?string $status = null)
     {
+        $this->authorizeDeveloperImport();
         $this->prepareLongRunningImport();
 
         $importStatus = $this->normalizeImportStatus($status);
@@ -171,6 +173,7 @@ class GratitudeController extends Controller
 
     public function apiImportAccount(string $gratitudeNumber)
     {
+        $this->authorizeDeveloperImport();
         $this->prepareLongRunningImport();
 
         $gratitude = Gratitude::where('gratitudeNumber', $gratitudeNumber)->firstOrFail();
@@ -229,6 +232,11 @@ class GratitudeController extends Controller
         return in_array($status, ['active', 'inactive'], true)
             ? $status
             : 'active';
+    }
+
+    private function authorizeDeveloperImport(): void
+    {
+        abort_unless(request()->user()?->hasRole('Developer'), 403, 'Only developers can run imports.');
     }
 
     private function fetchRemoteJourneysMap(string $baseUrl): array

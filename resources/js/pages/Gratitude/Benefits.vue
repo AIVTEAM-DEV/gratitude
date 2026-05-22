@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { Head } from '@inertiajs/vue3';
+import { Head, usePage } from '@inertiajs/vue3';
 import AppLayout from '@/layouts/AppLayout.vue';
 import type { BreadcrumbItem } from '@/types';
-import { ref, onMounted } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import axios from 'axios';
 import AddBenefit from '@/components/Gratitude/AddBenefit.vue';
 import UpdateBenefit from '@/components/Gratitude/UpdateBenefit.vue';
@@ -13,6 +13,9 @@ const breadcrumbs: BreadcrumbItem[] = [
     { title: 'Gratitude Program', href: '/gratitude' },
     { title: 'Base Benefits', href: '/gratitude/benefits' },
 ];
+
+const page = usePage();
+const canImportGratitude = computed(() => Boolean((page.props.auth as any)?.can_import_gratitude));
 
 const benefits = ref<any[]>([]);
 
@@ -60,7 +63,7 @@ onMounted(() => {
                     <h1 class="text-3xl font-bold tracking-tight text-foreground">Base Benefits Pool</h1>
                     <p class="mt-2 text-sm text-muted-foreground">Manage the master list of benefits available in the program.</p>
                 </div>
-                <div class="mt-4 sm:ml-16 sm:mt-0 sm:flex-none">
+                <div v-if="canImportGratitude" class="mt-4 sm:ml-16 sm:mt-0 sm:flex-none">
                     <Button @click="importBenefits">Import</Button>
                 </div>
                 <div class="mt-4 sm:ml-16 sm:mt-0 sm:flex-none">

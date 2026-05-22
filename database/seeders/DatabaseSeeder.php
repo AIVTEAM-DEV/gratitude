@@ -27,6 +27,7 @@ class DatabaseSeeder extends Seeder
             'gratitude:create',
             'gratitude:update',
             'gratitude:delete',
+            'gratitude:import',
             'gratitude.earned:create',
             'gratitude.earned:update',
             'gratitude.earned:delete',
@@ -51,6 +52,9 @@ class DatabaseSeeder extends Seeder
         $superAdminRole = \Spatie\Permission\Models\Role::firstOrCreate(['name' => 'Super Admin']);
         $superAdminRole->syncPermissions(\Spatie\Permission\Models\Permission::all());
 
+        $developerRole = \Spatie\Permission\Models\Role::firstOrCreate(['name' => 'Developer']);
+        $developerRole->syncPermissions(['gratitude:import']);
+
         $user = User::firstOrCreate(
             ['email' => 'it@artinvoyage.com'],
             [
@@ -63,6 +67,7 @@ class DatabaseSeeder extends Seeder
         );
 
         $user->assignRole($superAdminRole);
+        $user->assignRole($developerRole);
 
         $this->call(GratitudeLevelSeeder::class);
     }

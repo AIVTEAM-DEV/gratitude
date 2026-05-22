@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Link } from '@inertiajs/vue3';
-import { HeartHandshake, LayoutGrid, Shield } from 'lucide-vue-next';
+import { HeartHandshake, LayoutGrid, ScrollText, Shield } from 'lucide-vue-next';
 import AppLogo from '@/components/AppLogo.vue';
 import NavMain from '@/components/NavMain.vue';
 import NavUser from '@/components/NavUser.vue';
@@ -44,6 +44,7 @@ const mainNavItems: NavItem[] = [
             { title: 'Users', href: '/users' },
             { title: 'Roles', href: '/roles' },
             { title: 'Permissions', href: '/permissions' },
+            { title: 'Logs', href: '/logs', icon: ScrollText },
         ],
     },
 ];

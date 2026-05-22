@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Head, Link } from '@inertiajs/vue3';
+import { Head, Link, usePage } from '@inertiajs/vue3';
 import AppLayout from '@/layouts/app/AppSidebarLayout.vue';
 import type { BreadcrumbItem } from '@/types';
 import { computed, ref, onMounted, watch } from 'vue';
@@ -16,6 +16,9 @@ const breadcrumbs: BreadcrumbItem[] = [
     { title: 'Gratitude Program', href: '/gratitude' },
     { title: 'Accounts', href: '/gratitude/accounts' },
 ];
+
+const page = usePage();
+const canImportGratitude = computed(() => Boolean((page.props.auth as any)?.can_import_gratitude));
 
 const columns = [
     { key: 'id', label: 'ID', sortable: true },
@@ -243,22 +246,24 @@ const recalculateLevel = async (gratitudeNumber: string) => {
                         <Printer class="mr-2 h-4 w-4" />
                         Print
                     </Button>
-                    <Button variant="default" @click="handleApiImport('gratitudes', 'active')" :disabled="importingAction !== null">
-                        <Upload class="mr-2 h-4 w-4" />
-                        {{ isImporting('gratitudes', 'active') ? 'Importing Active Gratitudes...' : 'Import Active Gratitudes' }}
-                    </Button>
-                    <Button variant="outline" @click="handleApiImport('gratitudes', 'inactive')" :disabled="importingAction !== null">
-                        <Upload class="mr-2 h-4 w-4" />
-                        {{ isImporting('gratitudes', 'inactive') ? 'Importing Inactive Gratitudes...' : 'Import Inactive Gratitudes' }}
-                    </Button>
-                    <Button variant="secondary" @click="handleApiImport('accounts', 'active')" :disabled="importingAction !== null">
-                        <Upload class="mr-2 h-4 w-4" />
-                        {{ isImporting('accounts', 'active') ? 'Importing Active Account Data...' : 'Import Active Account Data' }}
-                    </Button>
-                    <Button variant="outline" @click="handleApiImport('accounts', 'inactive')" :disabled="importingAction !== null">
-                        <Upload class="mr-2 h-4 w-4" />
-                        {{ isImporting('accounts', 'inactive') ? 'Importing Inactive Account Data...' : 'Import Inactive Account Data' }}
-                    </Button>
+                    <template v-if="canImportGratitude">
+                        <Button variant="default" @click="handleApiImport('gratitudes', 'active')" :disabled="importingAction !== null">
+                            <Upload class="mr-2 h-4 w-4" />
+                            {{ isImporting('gratitudes', 'active') ? 'Importing Active Gratitudes...' : 'Import Active Gratitudes' }}
+                        </Button>
+                        <Button variant="outline" @click="handleApiImport('gratitudes', 'inactive')" :disabled="importingAction !== null">
+                            <Upload class="mr-2 h-4 w-4" />
+                            {{ isImporting('gratitudes', 'inactive') ? 'Importing Inactive Gratitudes...' : 'Import Inactive Gratitudes' }}
+                        </Button>
+                        <Button variant="secondary" @click="handleApiImport('accounts', 'active')" :disabled="importingAction !== null">
+                            <Upload class="mr-2 h-4 w-4" />
+                            {{ isImporting('accounts', 'active') ? 'Importing Active Account Data...' : 'Import Active Account Data' }}
+                        </Button>
+                        <Button variant="outline" @click="handleApiImport('accounts', 'inactive')" :disabled="importingAction !== null">
+                            <Upload class="mr-2 h-4 w-4" />
+                            {{ isImporting('accounts', 'inactive') ? 'Importing Inactive Account Data...' : 'Import Inactive Account Data' }}
+                        </Button>
+                    </template>
                 </div>
             </div>
 

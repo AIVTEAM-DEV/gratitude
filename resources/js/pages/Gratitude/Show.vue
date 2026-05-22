@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Head, Link } from '@inertiajs/vue3';
+import { Head, Link, usePage } from '@inertiajs/vue3';
 import AppLayout from '@/layouts/AppLayout.vue';
 import { BreadcrumbItem } from '@/types';
 import { ref, computed, onMounted } from 'vue';
@@ -31,13 +31,17 @@ const props = defineProps({
     }
 });
 
+const page = usePage();
+const canImportGratitude = computed(() => Boolean((page.props.auth as any)?.can_import_gratitude));
+
 const breadcrumbs: BreadcrumbItem[] = [
     { title: 'Home', href: '/dashboard' },
     { title: 'Gratitude Program', href: '/gratitude' },
     { title: 'Accounts', href: '/gratitude/accounts' },
-    { title: `Gratitude #${props.gratitudeNumber}`, href: `/gratitude/${props.gratitudeNumber}` },
+    { title: `Gratitude #${props.gratitudeNumber}`, href: `/gratitude/account/show/${props.gratitudeNumber}` },
 ];
 
+const loading = ref(true);
 const data = ref<any>({
     gratitude: null,
     guests: [],
@@ -63,11 +67,14 @@ const data = ref<any>({
 });
 
 const fetchDetails = async () => {
+    loading.value = true;
     try {
         const response = await axios.get(`/internal-api/gratitude/account/show/${props.gratitudeNumber}`);
         data.value = response.data;
     } catch (error) {
         console.error("Failed to load gratitude details", error);
+    } finally {
+        loading.value = false;
     }
 };
 
@@ -296,6 +303,7 @@ const changeTypeClass = (type: string) => {
 
 const syncing = ref(false);
 const importing = ref(false);
+const accountActionBusy = computed(() => syncing.value || importing.value);
 const syncBalance = async () => {
     syncing.value = true;
     try {
@@ -455,12 +463,16 @@ const exportPointsHistoryPdf = () => openPointsHistoryPrintWindow();
                     <p class="text-sm text-muted-foreground mt-1">Manage points, benefits, and guest status for this account</p>
                 </div>
                 <div>
-                     <Link href="/gratitude">
+                     <Link href="/gratitude/accounts">
                         <Button variant="outline" size="sm" class="flex items-center gap-2 text-muted-foreground hover:text-foreground h-9 px-4 rounded-full border-border/50 shadow-sm transition-all hover:bg-muted/50">
-                            <ArrowLeft class="w-4 h-4" /> Back to Program
+                            <ArrowLeft class="w-4 h-4" /> Back to Accounts
                         </Button>
                     </Link>
                 </div>
+            </div>
+
+            <div v-if="loading && !data.gratitude" class="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
+                Loading account...
             </div>
 
             <!-- Dashboard Row 1: Guests & Actions in a Card -->
@@ -502,21 +514,22 @@ const exportPointsHistoryPdf = () => openPointsHistoryPrintWindow();
                     </div>
 
                     <!-- Actions & Level -->
-                    <div class="flex items-center gap-6">
-                        <div class="flex items-center space-x-3">
+                    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-6">
+                        <div class="flex flex-wrap items-center gap-3">
                             <Button
                                 variant="outline"
                                 class="shadow-md transition-all h-10 px-4 text-xs font-bold tracking-wider uppercase rounded-lg flex items-center gap-2"
-                                :disabled="syncing"
+                                :disabled="accountActionBusy"
                                 @click="syncBalance"
                             >
                                 <RefreshCw class="w-3.5 h-3.5" :class="{ 'animate-spin': syncing }" />
                                 {{ syncing ? 'Syncing...' : 'Sync Balance' }}
                             </Button>
                             <Button
+                                v-if="canImportGratitude"
                                 variant="default"
                                 class="shadow-md transition-all h-10 px-4 text-xs font-bold tracking-wider uppercase rounded-lg flex items-center gap-2"
-                                :disabled="importing"
+                                :disabled="accountActionBusy"
                                 @click="importAccount"
                             >
                                 <Upload class="w-3.5 h-3.5" :class="{ 'animate-pulse': importing }" />
@@ -528,9 +541,6 @@ const exportPointsHistoryPdf = () => openPointsHistoryPrintWindow();
                                 :levels="data.levels"
                                 @saved="fetchDetails"
                             />
-                            <Button variant="destructive" class="shadow-md transition-all h-10 px-6 text-xs font-bold tracking-wider uppercase rounded-lg">
-                                Delete
-                            </Button>
                         </div>
                         <!-- Level only icon -->
                         <div class="pl-6 border-l border-border/50 flex items-center justify-center min-w-[100px]">

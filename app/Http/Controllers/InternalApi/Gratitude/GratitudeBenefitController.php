@@ -15,6 +15,8 @@ class GratitudeBenefitController extends Controller
 
     public function importBenefits()
     {
+        abort_unless(request()->user()?->hasRole('Developer'), 403, 'Only developers can run imports.');
+
         $this->prepareLongRunningImport();
 
         $getResponse = Http::timeout(120)->get('https://artinvoyage.com/wp-json/api/all-gratitude-benefits');

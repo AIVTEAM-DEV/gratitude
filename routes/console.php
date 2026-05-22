@@ -13,3 +13,4 @@ Schedule::command('gratitude:activate-points')->daily()->withoutOverlapping();
 Schedule::command('gratitude:recalculate-levels')->daily()->withoutOverlapping();
 Schedule::command('gratitude:expire-points')->daily()->withoutOverlapping();
 Schedule::command('gratitude:check-inactivity')->daily()->withoutOverlapping();
+Schedule::command('logs:prune --days=60')->daily()->withoutOverlapping();

@@ -22,6 +22,7 @@ use Carbon\Carbon;
 use Database\Seeders\GratitudeLevelSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Spatie\Permission\Models\Role;
 use Tests\TestCase;
 
 class GratitudeServiceTest extends TestCase
@@ -43,6 +44,8 @@ class GratitudeServiceTest extends TestCase
         parent::setUp();
         $this->seed(GratitudeLevelSeeder::class);
         $this->user = User::factory()->create();
+        $developerRole = Role::firstOrCreate(['name' => 'Developer', 'guard_name' => 'web']);
+        $this->user->assignRole($developerRole);
         $this->pointService = app(PointService::class);
         $this->tierService = new TierService;
         $this->gratitudeService = app(GratitudeService::class);
@@ -55,6 +58,27 @@ class GratitudeServiceTest extends TestCase
             'level_obtained_at' => Carbon::today(),
             'systemLevelUpdate' => true,
         ]);
+    }
+
+    public function test_internal_imports_require_developer_role()
+    {
+        $this->user->syncRoles([]);
+
+        $this->actingAs($this->user)
+            ->getJson('/internal-api/gratitude/migrate-data/active')
+            ->assertForbidden();
+
+        $this->actingAs($this->user)
+            ->getJson('/internal-api/gratitude/migrate-account-data/active')
+            ->assertForbidden();
+
+        $this->actingAs($this->user)
+            ->postJson('/internal-api/gratitude/account/G0007/import')
+            ->assertForbidden();
+
+        $this->actingAs($this->user)
+            ->getJson('/internal-api/gratitude/migrate-benefits/data')
+            ->assertForbidden();
     }
 
     public function test_create_account_generates_the_next_gratitude_number()
