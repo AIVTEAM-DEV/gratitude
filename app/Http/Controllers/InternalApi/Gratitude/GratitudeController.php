@@ -169,6 +169,59 @@ class GratitudeController extends Controller
         ]);
     }
 
+    public function apiImportAccount(string $gratitudeNumber)
+    {
+        $this->prepareLongRunningImport();
+
+        $gratitude = Gratitude::where('gratitudeNumber', $gratitudeNumber)->firstOrFail();
+        $baseUrl = rtrim((string) config('services.aivteam.base_url'), '/');
+        $journeysMap = $this->fetchRemoteJourneysMap($baseUrl);
+        $summaryRecord = $gratitude->toArray();
+
+        if ($gratitude->old_id) {
+            $summaryRecord['id'] = $gratitude->old_id;
+        } else {
+            unset($summaryRecord['id']);
+        }
+
+        [$detailedRecords, $failures] = $this->fetchRemoteGratitudeAccountDetails([$summaryRecord], $baseUrl);
+        $detailRecord = array_values($detailedRecords)[0] ?? null;
+
+        if (! $detailRecord) {
+            return response()->json([
+                'message' => 'Account data import failed: no remote detail payload was found.',
+                'detail_failures' => count($failures),
+                'failed_detail_accounts' => $failures,
+            ], 422);
+        }
+
+        if (empty($detailRecord['id'])) {
+            if (! $gratitude->old_id) {
+                return response()->json([
+                    'message' => 'Account data import failed: remote payload is missing the legacy account id.',
+                ], 422);
+            }
+
+            $detailRecord['id'] = $gratitude->old_id;
+        }
+
+        try {
+            DB::transaction(fn () => $this->gratitudeService->importAccountsData([$detailRecord], $journeysMap));
+        } catch (\Throwable $e) {
+            return response()->json(['message' => 'Account data import failed: '.$e->getMessage()], 500);
+        }
+
+        $gratitude = Gratitude::where('gratitudeNumber', $gratitudeNumber)->firstOrFail();
+
+        return response()->json([
+            'message' => 'Account imported successfully',
+            'gratitude_number' => $gratitude->gratitudeNumber,
+            'detail_failures' => count($failures),
+            'failed_detail_accounts' => $failures,
+            'gratitude' => $gratitude,
+        ]);
+    }
+
     private function normalizeImportStatus(?string $status): string
     {
         $status = strtolower(trim((string) $status));

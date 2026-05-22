@@ -953,6 +953,113 @@ class GratitudeServiceTest extends TestCase
         ], $gratitude->guests_data);
     }
 
+    public function test_account_detail_import_fetches_current_account_payload()
+    {
+        config([
+            'services.aivteam.base_url' => 'https://aivteam.test',
+            'services.aivteam.access_token' => 'test-token',
+        ]);
+
+        Gratitude::create([
+            'old_id' => 88,
+            'gratitudeNumber' => 'G0007',
+            'totalPoints' => 0,
+            'useablePoints' => 0,
+            'level' => 'Explorer',
+            'status' => 'active',
+            'is_active' => true,
+            'importStatus' => true,
+            'level_obtained_at' => Carbon::today(),
+        ]);
+
+        $summary = [
+            'id' => 88,
+            'old_id' => 88,
+            'gratitudeNumber' => 'G0007',
+            'totalPoints' => 900,
+            'useablePoints' => 450,
+            'level' => 'Explorer',
+            'status' => 'active',
+            'importStatus' => 1,
+        ];
+
+        Http::fake([
+            'https://aivteam.test/api/get/all/journeys' => Http::response([
+                ['id' => 901, 'endDate' => '2026-03-15'],
+            ]),
+            'https://aivteam.test/api/gratitude/get/gratitude-data-all/gratitude/G0007' => Http::response([
+                'status' => true,
+                'data' => [
+                    'gratitude' => $summary,
+                    'cancellationPoints' => [],
+                    'earnedPoints' => [
+                        [
+                            'id' => 712,
+                            'user_id' => null,
+                            'journey_id' => '901',
+                            'gratitudeNumber' => 'G0007',
+                            'points' => '900',
+                            'redeemed_points' => 0,
+                            'amount' => '900',
+                            'date' => '2026-03-01T00:00:00.000000Z',
+                            'description' => 'Tier Points Earned on Journey',
+                            'category' => null,
+                            'cancel_id' => null,
+                            'status' => '1',
+                            'created_at' => '2026-03-01T00:00:00.000000Z',
+                            'updated_at' => '2026-03-01T00:00:00.000000Z',
+                        ],
+                    ],
+                    'bonusPoints' => [],
+                    'redeemPoints' => [],
+                ],
+            ]),
+            'https://aivteam.test/api/gratitude/get/gratitude-by-number/G0007' => Http::response([
+                'data' => [
+                    'guests' => [
+                        [
+                            'id' => 301,
+                            'first_name' => 'Noah',
+                            'last_name' => 'Import',
+                            'email' => 'noah@example.com',
+                            'gratitude_ownership' => 'primary',
+                        ],
+                    ],
+                ],
+            ]),
+        ]);
+
+        $response = $this->actingAs($this->user)->postJson('/internal-api/gratitude/account/G0007/import');
+
+        $response
+            ->assertOk()
+            ->assertJsonPath('message', 'Account imported successfully')
+            ->assertJsonPath('gratitude_number', 'G0007')
+            ->assertJsonPath('detail_failures', 0);
+
+        Http::assertSent(fn ($request) => $request->url() === 'https://aivteam.test/api/gratitude/get/gratitude-data-all/gratitude/G0007');
+        Http::assertSent(fn ($request) => $request->url() === 'https://aivteam.test/api/gratitude/get/gratitude-by-number/G0007');
+
+        $this->assertDatabaseHas('earned_points', [
+            'old_id' => 712,
+            'gratitudeNumber' => 'G0007',
+            'points' => 900,
+        ]);
+
+        $gratitude = Gratitude::where('gratitudeNumber', 'G0007')->firstOrFail();
+        $this->assertSame([
+            [
+                'id' => 301,
+                'first_name' => 'Noah',
+                'last_name' => 'Import',
+                'preferred_name' => null,
+                'email' => 'noah@example.com',
+                'birthday' => null,
+                'ownership' => 'primary',
+            ],
+        ], $gratitude->guests_data);
+    }
+
     public function test_internal_import_fetches_inactive_summary_endpoint()
     {
         config([

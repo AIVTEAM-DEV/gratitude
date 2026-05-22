@@ -28,6 +28,7 @@ Route::name('gratitude.')->prefix('gratitude/')
         Route::get('reserve', [GratitudeController::class, 'apiReserve'])->name('reserve');
         Route::get('history', [GratitudeController::class, 'apiHistory'])->name('history');
         Route::get('account/show/{gratitudeNumber}', [GratitudeController::class, 'apiShow'])->name('account.show');
+        Route::post('account/{gratitudeNumber}/import', [GratitudeController::class, 'apiImportAccount'])->name('account.import');
         Route::patch('account/{gratitudeNumber}/status', [GratitudeController::class, 'apiUpdateStatus'])->name('account.status');
         Route::post('{gratitudeNumber}/earned', [GratitudeController::class, 'apiAddEarned'])->name('earned');
         Route::put('{gratitudeNumber}/earned/{id}', [GratitudeController::class, 'apiUpdateEarned'])->name('earned.update');

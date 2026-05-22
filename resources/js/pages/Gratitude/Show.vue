@@ -22,7 +22,7 @@ import UpdateEarnedBenefit from '@/components/Gratitude/UpdateEarnedBenefit.vue'
 import DeleteEarnedBenefit from '@/components/Gratitude/DeleteEarnedBenefit.vue';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { ArrowLeft, ChevronDown, Award, History, Gift, ShieldAlert, Zap, Clock, RefreshCw, TrendingUp, TrendingDown, Minus, Star, ScrollText, Printer, FileText } from 'lucide-vue-next';
+import { ArrowLeft, ChevronDown, Award, History, Gift, ShieldAlert, Zap, Clock, RefreshCw, TrendingUp, TrendingDown, Minus, Star, ScrollText, Printer, FileText, Upload } from 'lucide-vue-next';
 
 const props = defineProps({
     gratitudeNumber: {
@@ -295,6 +295,7 @@ const changeTypeClass = (type: string) => {
 };
 
 const syncing = ref(false);
+const importing = ref(false);
 const syncBalance = async () => {
     syncing.value = true;
     try {
@@ -304,6 +305,20 @@ const syncBalance = async () => {
         console.error('Failed to sync balance', error);
     } finally {
         syncing.value = false;
+    }
+};
+
+const importAccount = async () => {
+    importing.value = true;
+    try {
+        const response = await axios.post(`/internal-api/gratitude/account/${props.gratitudeNumber}/import`);
+        await fetchDetails();
+        window.alert(response.data?.message || 'Account imported successfully.');
+    } catch (error: any) {
+        console.error('Failed to import account', error);
+        window.alert(error.response?.data?.message || 'Failed to import account.');
+    } finally {
+        importing.value = false;
     }
 };
 
@@ -497,6 +512,15 @@ const exportPointsHistoryPdf = () => openPointsHistoryPrintWindow();
                             >
                                 <RefreshCw class="w-3.5 h-3.5" :class="{ 'animate-spin': syncing }" />
                                 {{ syncing ? 'Syncing...' : 'Sync Balance' }}
+                            </Button>
+                            <Button
+                                variant="default"
+                                class="shadow-md transition-all h-10 px-4 text-xs font-bold tracking-wider uppercase rounded-lg flex items-center gap-2"
+                                :disabled="importing"
+                                @click="importAccount"
+                            >
+                                <Upload class="w-3.5 h-3.5" :class="{ 'animate-pulse': importing }" />
+                                {{ importing ? 'Importing...' : 'Import' }}
                             </Button>
                             <UpdateAccountStatus
                                 :gratitudeNumber="gratitudeNumber"
