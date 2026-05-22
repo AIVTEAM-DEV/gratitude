@@ -24,10 +24,8 @@ use App\Services\Gratitude\GratitudeAccountService;
 use App\Services\Gratitude\GratitudeService;
 use App\Services\Gratitude\TierService;
 use Carbon\Carbon;
-use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Http;
 
 class GratitudeController extends Controller
 {
@@ -39,378 +37,6 @@ class GratitudeController extends Controller
         protected CancellationService $cancellationService,
         protected TierService $tierService,
     ) {}
-
-    private function aivteamHttp(): PendingRequest
-    {
-        return Http::withoutVerifying()
-            ->withToken(config('services.aivteam.access_token'))
-            ->timeout(600);
-    }
-
-    public function import(?string $status = null)
-    {
-        return $this->importGratitude($status);
-    }
-
-    public function importGratitude(?string $status = null)
-    {
-        $this->authorizeDeveloperImport();
-        $this->prepareLongRunningImport();
-
-        $importStatus = $this->normalizeImportStatus($status);
-        $baseUrl = rtrim((string) config('services.aivteam.base_url'), '/');
-        $gratitudesUrl = $baseUrl.'/api/gratitude/get/gratitude-data-all-by-status/gratitude/'.$importStatus;
-
-        $getResponse = $this->aivteamHttp()->get($gratitudesUrl);
-
-        if (! $getResponse->successful()) {
-            return response()->json(['message' => 'Failed to fetch data from remote API All Gratitudes', 'status' => $getResponse->status()], 500);
-        }
-
-        $summaryRecords = $this->normalizeRemoteList($getResponse->json(), ['data', 'gratitudes']);
-
-        if (empty($summaryRecords)) {
-            return response()->json(['message' => 'Invalid data format or empty payload'], 400);
-        }
-
-        try {
-            $importedAccounts = DB::transaction(fn () => $this->gratitudeService->importGratitudeTable($summaryRecords));
-        } catch (\Throwable $e) {
-            return response()->json(['message' => 'Gratitude import failed: '.$e->getMessage()], 500);
-        }
-
-        return response()->json([
-            'message' => ucfirst($importStatus).' gratitude table imported successfully',
-            'import_status' => $importStatus,
-            'summary_accounts' => count($summaryRecords),
-            'imported_accounts' => $importedAccounts,
-        ]);
-    }
-
-    public function importAccountsDataByStatus(?string $status = null)
-    {
-        $this->authorizeDeveloperImport();
-        $this->prepareLongRunningImport();
-
-        $importStatus = $this->normalizeImportStatus($status);
-        $baseUrl = rtrim((string) config('services.aivteam.base_url'), '/');
-        $journeysMap = $this->fetchRemoteJourneysMap($baseUrl);
-        $isActive = $importStatus === 'active';
-        $summaryAccounts = 0;
-        $detailedAccounts = 0;
-        $detailFailures = [];
-
-        $query = Gratitude::query()
-            ->where('is_active', $isActive)
-            ->where('importStatus', true)
-            ->whereNotNull('gratitudeNumber')
-            ->select([
-                'id',
-                'old_id',
-                'gratitudeNumber',
-                'guests_data',
-                'totalPoints',
-                'useablePoints',
-                'level',
-                'status',
-                'statusChange',
-                'importStatus',
-                'is_active',
-                'level_obtained_at',
-                'expires_at',
-                'created_at',
-                'updated_at',
-            ])
-            ->orderBy('id');
-
-        try {
-            $query->chunkById(50, function ($gratitudes) use ($baseUrl, $journeysMap, &$summaryAccounts, &$detailedAccounts, &$detailFailures) {
-                $summaryRecords = $gratitudes
-                    ->map(fn (Gratitude $gratitude) => $gratitude->toArray())
-                    ->all();
-
-                $summaryAccounts += count($summaryRecords);
-
-                [$detailedRecords, $failures] = $this->fetchRemoteGratitudeAccountDetails($summaryRecords, $baseUrl);
-                $detailFailures = array_merge($detailFailures, $failures);
-
-                if ($detailedRecords === []) {
-                    return;
-                }
-
-                DB::transaction(fn () => $this->gratitudeService->importAccountsData(array_values($detailedRecords), $journeysMap));
-                $detailedAccounts += count($detailedRecords);
-            });
-        } catch (\Throwable $e) {
-            return response()->json(['message' => 'Account data import failed: '.$e->getMessage()], 500);
-        }
-
-        try {
-            $syncedAccounts = $this->gratitudeService->syncAccountBalancesFor(
-                Gratitude::query()
-                    ->where('is_active', $isActive)
-                    ->where('importStatus', true)
-                    ->whereNotNull('gratitudeNumber')
-                    ->pluck('gratitudeNumber')
-                    ->all()
-            );
-        } catch (\Throwable $e) {
-            return response()->json([
-                'message' => 'Account data imported, but balance sync failed: '.$e->getMessage(),
-            ], 500);
-        }
-
-        return response()->json([
-            'message' => ucfirst($importStatus).' account data imported successfully',
-            'import_status' => $importStatus,
-            'summary_accounts' => $summaryAccounts,
-            'detailed_accounts' => $detailedAccounts,
-            'detail_failures' => count($detailFailures),
-            'failed_detail_accounts' => $detailFailures,
-            'synced_accounts' => $syncedAccounts,
-        ]);
-    }
-
-    public function apiImportAccount(string $gratitudeNumber)
-    {
-        $this->authorizeDeveloperImport();
-        $this->prepareLongRunningImport();
-
-        $gratitude = Gratitude::where('gratitudeNumber', $gratitudeNumber)->firstOrFail();
-        $baseUrl = rtrim((string) config('services.aivteam.base_url'), '/');
-        $journeysMap = $this->fetchRemoteJourneysMap($baseUrl);
-        $summaryRecord = $gratitude->toArray();
-
-        if ($gratitude->old_id) {
-            $summaryRecord['id'] = $gratitude->old_id;
-        } else {
-            unset($summaryRecord['id']);
-        }
-
-        [$detailedRecords, $failures] = $this->fetchRemoteGratitudeAccountDetails([$summaryRecord], $baseUrl);
-        $detailRecord = array_values($detailedRecords)[0] ?? null;
-
-        if (! $detailRecord) {
-            return response()->json([
-                'message' => 'Account data import failed: no remote detail payload was found.',
-                'detail_failures' => count($failures),
-                'failed_detail_accounts' => $failures,
-            ], 422);
-        }
-
-        if (empty($detailRecord['id'])) {
-            if (! $gratitude->old_id) {
-                return response()->json([
-                    'message' => 'Account data import failed: remote payload is missing the legacy account id.',
-                ], 422);
-            }
-
-            $detailRecord['id'] = $gratitude->old_id;
-        }
-
-        try {
-            DB::transaction(fn () => $this->gratitudeService->importAccountsData([$detailRecord], $journeysMap));
-        } catch (\Throwable $e) {
-            return response()->json(['message' => 'Account data import failed: '.$e->getMessage()], 500);
-        }
-
-        $gratitude = Gratitude::where('gratitudeNumber', $gratitudeNumber)->firstOrFail();
-
-        return response()->json([
-            'message' => 'Account imported successfully',
-            'gratitude_number' => $gratitude->gratitudeNumber,
-            'detail_failures' => count($failures),
-            'failed_detail_accounts' => $failures,
-            'gratitude' => $gratitude,
-        ]);
-    }
-
-    private function normalizeImportStatus(?string $status): string
-    {
-        $status = strtolower(trim((string) $status));
-
-        return in_array($status, ['active', 'inactive'], true)
-            ? $status
-            : 'active';
-    }
-
-    private function authorizeDeveloperImport(): void
-    {
-        abort_unless(request()->user()?->hasRole('Developer'), 403, 'Only developers can run imports.');
-    }
-
-    private function fetchRemoteJourneysMap(string $baseUrl): array
-    {
-        $journeysMap = [];
-        $getJourneysData = $this->aivteamHttp()->get($baseUrl.'/api/get/all/journeys');
-
-        if (! $getJourneysData->successful()) {
-            return $journeysMap;
-        }
-
-        foreach ($this->normalizeRemoteList($getJourneysData->json(), ['data', 'journeys']) as $journey) {
-            if (isset($journey['id'])) {
-                $journeysMap[$journey['id']] = $journey;
-            }
-        }
-
-        return $journeysMap;
-    }
-
-    private function prepareLongRunningImport(): void
-    {
-        @ini_set('max_execution_time', '0');
-        @set_time_limit(0);
-        DB::disableQueryLog();
-    }
-
-    private function fetchRemoteGratitudeAccountDetails(array $summaryRecords, string $baseUrl): array
-    {
-        $detailedRecords = [];
-        $failures = [];
-
-        foreach ($summaryRecords as $summaryRecord) {
-            $gratitudeNumber = $summaryRecord['gratitudeNumber'] ?? null;
-
-            if (! is_scalar($gratitudeNumber) || trim((string) $gratitudeNumber) === '') {
-                $failures[] = [
-                    'gratitudeNumber' => null,
-                    'message' => 'Missing gratitudeNumber in summary record',
-                ];
-
-                continue;
-            }
-
-            $gratitudeNumber = (string) $gratitudeNumber;
-
-            try {
-                $response = $this->aivteamHttp()->get(
-                    $baseUrl . '/api/gratitude/get/gratitude-data-all/gratitude/' . rawurlencode($gratitudeNumber)
-                );
-            } catch (\Throwable $e) {
-                $failures[] = [
-                    'gratitudeNumber' => $gratitudeNumber,
-                    'message' => $e->getMessage(),
-                ];
-
-                continue;
-            }
-
-            if (! $response->successful()) {
-                $failures[] = [
-                    'gratitudeNumber' => $gratitudeNumber,
-                    'status' => $response->status(),
-                    'message' => 'Failed to fetch detail payload',
-                ];
-
-                continue;
-            }
-
-            $payload = $response->json();
-            $detailRecord = $this->normalizeRemoteGratitudeDetail($payload, $summaryRecord);
-
-            if ($detailRecord === null) {
-                $failures[] = [
-                    'gratitudeNumber' => $gratitudeNumber,
-                    'message' => 'Invalid detail payload',
-                ];
-
-                continue;
-            }
-
-            $guestData = $this->fetchRemoteGuestData($baseUrl, $gratitudeNumber);
-
-            if ($guestData !== null) {
-                $detailRecord['guests_data'] = $guestData;
-            } else {
-                $guestData = Gratitude::extractGuestsData($payload);
-
-                if ($guestData !== []) {
-                    $detailRecord['guests_data'] = $guestData;
-                }
-            }
-
-            $detailedRecords[$gratitudeNumber] = $detailRecord;
-        }
-
-        return [$detailedRecords, $failures];
-    }
-
-    private function fetchRemoteGuestData(string $baseUrl, string $gratitudeNumber): ?array
-    {
-        try {
-            $response = $this->aivteamHttp()
-                ->timeout(60)
-                ->get($baseUrl . '/api/gratitude/get/gratitude-by-number/' . rawurlencode($gratitudeNumber));
-        } catch (\Throwable) {
-            return null;
-        }
-
-        return $response->successful()
-            ? Gratitude::extractGuestsData($response->json())
-            : null;
-    }
-
-    private function normalizeRemoteGratitudeDetail(mixed $payload, array $summaryRecord): ?array
-    {
-        if (! is_array($payload)) {
-            return null;
-        }
-
-        if (($payload['status'] ?? true) === false) {
-            return null;
-        }
-
-        $data = is_array($payload['data'] ?? null) ? $payload['data'] : $payload;
-        $gratitude = is_array($data['gratitude'] ?? null) ? $data['gratitude'] : null;
-
-        if ($gratitude === null && isset($data['gratitudeNumber'])) {
-            $gratitude = $data;
-        }
-
-        if (! is_array($gratitude)) {
-            return null;
-        }
-
-        return array_merge($summaryRecord, $gratitude, [
-            'cancellationPoints' => $this->asList($data['cancellationPoints'] ?? []),
-            'earnedPoints' => $this->asList($data['earnedPoints'] ?? []),
-            'bonusPoints' => $this->asList($data['bonusPoints'] ?? []),
-            'redeemPoints' => $this->asList($data['redeemPoints'] ?? $data['redemptionPoints'] ?? []),
-        ]);
-    }
-
-    private function mergeRemoteGratitudeRecords(array $summaryRecords, array $detailedRecords): array
-    {
-        return array_map(function (array $summaryRecord) use ($detailedRecords) {
-            $gratitudeNumber = $summaryRecord['gratitudeNumber'] ?? null;
-
-            if (is_scalar($gratitudeNumber) && isset($detailedRecords[(string) $gratitudeNumber])) {
-                return $detailedRecords[(string) $gratitudeNumber];
-            }
-
-            return $summaryRecord;
-        }, $summaryRecords);
-    }
-
-    private function normalizeRemoteList(mixed $payload, array $keys = ['data']): array
-    {
-        if (! is_array($payload)) {
-            return [];
-        }
-
-        if (array_is_list($payload)) {
-            return $this->asList($payload);
-        }
-
-        foreach ($keys as $key) {
-            if (array_key_exists($key, $payload)) {
-                return $this->asList($payload[$key]);
-            }
-        }
-
-        return [];
-    }
 
     public function apiIndex(Request $request)
     {
@@ -741,6 +367,7 @@ class GratitudeController extends Controller
         $request->validate([
             'points' => 'required|numeric|min:1',
             'amount' => 'nullable|numeric',
+            'date' => 'nullable|date',
             'reason' => 'nullable|string',
             'redemption_type' => 'nullable|string|in:journey,partner,other',
             'journey_id' => 'nullable|integer|required_if:redemption_type,journey',
@@ -831,7 +458,7 @@ class GratitudeController extends Controller
                 : $this->firstFilled($journey, ['guest_id', 'guestId', 'traveller_id', 'traveler_id', 'customer_id']);
 
             $guestName = $guest ? $this->guestName($guest) : $this->firstFilled($journey, ['guest_name', 'guestName', 'traveller_name', 'traveler_name']);
-            $key = ($guestId ?: 'account') . '#' . $journeyId;
+            $key = ($guestId ?: 'account').'#'.$journeyId;
 
             $normalized = [
                 'id' => $journeyId,
@@ -847,7 +474,7 @@ class GratitudeController extends Controller
                 'raw' => $journey,
             ];
 
-            $journeys[$key] = array_filter($normalized, fn($value) => $value !== null && $value !== '');
+            $journeys[$key] = array_filter($normalized, fn ($value) => $value !== null && $value !== '');
         };
 
         foreach ($guests as $guest) {
@@ -893,7 +520,7 @@ class GratitudeController extends Controller
         }
 
         return collect($journeys)
-            ->sortBy(fn($journey) => ($journey['guest_name'] ?? '') . '|' . ($journey['label'] ?? ''))
+            ->sortBy(fn ($journey) => ($journey['guest_name'] ?? '').'|'.($journey['label'] ?? ''))
             ->values()
             ->all();
     }
@@ -926,14 +553,14 @@ class GratitudeController extends Controller
 
         if (! array_is_list($value)) {
             $values = array_values($value);
-            $items = $values && collect($values)->every(fn($item) => is_array($item))
+            $items = $values && collect($values)->every(fn ($item) => is_array($item))
                 ? $values
                 : [$value];
         } else {
             $items = $value;
         }
 
-        return array_values(array_filter($items, fn($item) => is_array($item)));
+        return array_values(array_filter($items, fn ($item) => is_array($item)));
     }
 
     private function firstFilled(array $data, array $keys): mixed
@@ -975,7 +602,7 @@ class GratitudeController extends Controller
         $date = $this->firstFilled($journey, ['endDate', 'end_date', 'returnDate', 'return_date', 'date_end']);
 
         if ($title === '') {
-            $title = 'Journey #' . $journeyId;
+            $title = 'Journey #'.$journeyId;
         }
 
         return $date ? "{$title} ({$date})" : $title;
@@ -987,17 +614,17 @@ class GratitudeController extends Controller
 
         foreach ($earnedPoints as $point) {
             $point->setAttribute('cancellations_list', []);
-            $pointsByKey[EarnedPoint::class . '#' . $point->id] = $point;
+            $pointsByKey[EarnedPoint::class.'#'.$point->id] = $point;
         }
 
         foreach ($bonusPoints as $point) {
             $point->setAttribute('cancellations_list', []);
-            $pointsByKey[BonusPoint::class . '#' . $point->id] = $point;
+            $pointsByKey[BonusPoint::class.'#'.$point->id] = $point;
         }
 
         foreach ($cancellations as $cancellation) {
             foreach (($cancellation->points_breakdown ?? []) as $allocation) {
-                $key = ($allocation['source_type'] ?? '') . '#' . ($allocation['source_id'] ?? '');
+                $key = ($allocation['source_type'] ?? '').'#'.($allocation['source_id'] ?? '');
                 if (! isset($pointsByKey[$key])) {
                     continue;
                 }
@@ -1022,7 +649,7 @@ class GratitudeController extends Controller
             $history->push($this->historyEntry('earned', $point->usable_date ?? $point->date ?? $point->created_at, $point->points, $point->description ?: 'Earned points', 'EarnedPoint', $point->id));
 
             foreach (($point->redemptions ?? []) as $detail) {
-                $history->push($this->historyEntry('redemption', $detail->created_at, -1 * (int) $detail->points, $detail->redeemPoint?->reason ?: 'Point redemption', 'EarnedPoint', $point->id));
+                $history->push($this->historyEntry('redemption', $this->redemptionDetailDate($detail), -1 * (int) $detail->points, $detail->redeemPoint?->reason ?: 'Point redemption', 'EarnedPoint', $point->id));
             }
 
             foreach (($point->cancellations_list ?? []) as $cancel) {
@@ -1038,7 +665,7 @@ class GratitudeController extends Controller
             $history->push($this->historyEntry('bonus', $point->usable_date ?? $point->date ?? $point->created_at, $point->points, $point->description ?: 'Bonus points', 'BonusPoint', $point->id));
 
             foreach (($point->redemptions ?? []) as $detail) {
-                $history->push($this->historyEntry('redemption', $detail->created_at, -1 * (int) $detail->points, $detail->redeemPoint?->reason ?: 'Point redemption', 'BonusPoint', $point->id));
+                $history->push($this->historyEntry('redemption', $this->redemptionDetailDate($detail), -1 * (int) $detail->points, $detail->redeemPoint?->reason ?: 'Point redemption', 'BonusPoint', $point->id));
             }
 
             foreach (($point->cancellations_list ?? []) as $cancel) {
@@ -1051,7 +678,7 @@ class GratitudeController extends Controller
         }
 
         $allocatedCancellationIds = $cancellations
-            ->filter(fn($cancel) => ! empty($cancel->points_breakdown))
+            ->filter(fn ($cancel) => ! empty($cancel->points_breakdown))
             ->pluck('id')
             ->all();
 
@@ -1067,7 +694,7 @@ class GratitudeController extends Controller
                 $parsedDate = $entryDate ? Carbon::parse($entryDate) : null;
 
                 $history->push([
-                    'type' => 'level_' . $changeType,
+                    'type' => 'level_'.$changeType,
                     'date' => $parsedDate?->toDateString(),
                     'sort_date' => $parsedDate?->toISOString() ?? '',
                     'points' => 0,
@@ -1083,7 +710,7 @@ class GratitudeController extends Controller
         }
 
         return $history
-            ->sortByDesc(fn($entry) => $entry['sort_date'] ?? '')
+            ->sortByDesc(fn ($entry) => $entry['sort_date'] ?? '')
             ->values()
             ->map(function ($entry) {
                 unset($entry['sort_date']);
@@ -1105,5 +732,26 @@ class GratitudeController extends Controller
             'source_type' => $sourceType,
             'source_id' => $sourceId,
         ];
+    }
+
+    private function redemptionDetailDate($detail): mixed
+    {
+        $detailBreakdown = is_array($detail->points_breakdown ?? null) ? $detail->points_breakdown : [];
+
+        if (! empty($detailBreakdown['date'])) {
+            return $detailBreakdown['date'];
+        }
+
+        $redemptionBreakdown = is_array($detail->redeemPoint?->points_breakdown ?? null)
+            ? $detail->redeemPoint->points_breakdown
+            : [];
+
+        foreach (['redemption_date', 'imported_redemption_date', 'date', 'redeemed_at'] as $field) {
+            if (! empty($redemptionBreakdown[$field])) {
+                return $redemptionBreakdown[$field];
+            }
+        }
+
+        return $detail->created_at;
     }
 }

@@ -16,7 +16,6 @@ class GratitudeController extends Controller
         return Inertia::render('Gratitude/Index');
     }
 
-
     public function accounts(Request $request)
     {
         return Inertia::render('Gratitude/Accounts');
@@ -40,6 +39,13 @@ class GratitudeController extends Controller
     public function benefits(Request $request)
     {
         return Inertia::render('Gratitude/Benefits');
+    }
+
+    public function migrateData(Request $request)
+    {
+        abort_unless($request->user()?->hasRole('Developer'), 403);
+
+        return Inertia::render('Gratitude/MigrateData');
     }
 
     public function programLevelBenefits(Request $request)

@@ -1,6 +1,12 @@
 <script setup lang="ts">
-import { Link } from '@inertiajs/vue3';
-import { HeartHandshake, LayoutGrid, ScrollText, Shield } from 'lucide-vue-next';
+import { Link, usePage } from '@inertiajs/vue3';
+import {
+    HeartHandshake,
+    LayoutGrid,
+    ScrollText,
+    Shield,
+} from 'lucide-vue-next';
+import { computed } from 'vue';
 import AppLogo from '@/components/AppLogo.vue';
 import NavMain from '@/components/NavMain.vue';
 import NavUser from '@/components/NavUser.vue';
@@ -16,7 +22,12 @@ import {
 import { dashboard } from '@/routes';
 import type { NavItem } from '@/types';
 
-const mainNavItems: NavItem[] = [
+const page = usePage();
+const canImportGratitude = computed(() =>
+    Boolean((page.props.auth as any)?.can_import_gratitude),
+);
+
+const mainNavItems = computed<NavItem[]>(() => [
     {
         title: 'Dashboard',
         href: dashboard(),
@@ -32,7 +43,13 @@ const mainNavItems: NavItem[] = [
             { title: 'Levels', href: '/gratitude/levels' },
             { title: 'Benefits', href: '/gratitude/benefits' },
             { title: 'Point Reserve', href: '/gratitude/reserve' },
-            { title: 'Level Benefit Matrix', href: '/gratitude/program-level-benefits' },
+            ...(canImportGratitude.value
+                ? [{ title: 'Migrate Data', href: '/gratitude/migrate-data' }]
+                : []),
+            {
+                title: 'Level Benefit Matrix',
+                href: '/gratitude/program-level-benefits',
+            },
         ],
     },
     {
@@ -47,7 +64,7 @@ const mainNavItems: NavItem[] = [
             { title: 'Logs', href: '/logs', icon: ScrollText },
         ],
     },
-];
+]);
 
 // const footerNavItems: NavItem[] = [
 //     {
