@@ -690,8 +690,8 @@ class GratitudeAccountService
     private function pdfColumns(): array
     {
         return [
-            ['key' => 'Gratitude Number', 'label' => 'Gratitude Number', 'width' => 68],
-            ['key' => 'Level', 'label' => 'Level', 'width' => 48],
+            ['key' => 'Gratitude Number', 'label' => 'Gratitude Number', 'width' => 50],
+            ['key' => 'Level', 'label' => 'Level', 'width' => 58],
             ['key' => 'Ownership', 'label' => 'Ownership', 'width' => 58],
             ['key' => 'Guests First Name', 'label' => 'Guests First Name', 'width' => 68],
             ['key' => 'Guests Last Name', 'label' => 'Guests Last Name', 'width' => 68],
