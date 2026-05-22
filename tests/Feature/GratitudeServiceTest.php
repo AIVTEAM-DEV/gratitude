@@ -11,6 +11,7 @@ use App\Models\Gratitude\GratitudeBenefit;
 use App\Models\Gratitude\GratitudeEarnedBenefit;
 use App\Models\Gratitude\GratitudeLevel;
 use App\Models\Gratitude\RedeemPoints;
+use App\Models\Gratitude\RedeemPointsDetails;
 use App\Models\User;
 use App\Services\Gratitude\BonusPointService;
 use App\Services\Gratitude\CancellationService;
@@ -609,6 +610,64 @@ class GratitudeServiceTest extends TestCase
 
         $this->assertEquals(0, $bonus->redeemed_points);
         $this->assertEquals(350, $earned->redeemed_points);
+    }
+
+    public function test_redemption_uses_supplied_redemption_date_for_allocation_and_history()
+    {
+        $gratitudeNumber = 'G-REDEEM-DATE';
+
+        Carbon::setTestNow(Carbon::parse('2026-04-01 12:00:00'));
+
+        try {
+            Gratitude::create([
+                'gratitudeNumber' => $gratitudeNumber,
+                'level' => 'Explorer',
+                'level_obtained_at' => Carbon::parse('2026-01-01'),
+            ]);
+
+            $firstPoint = EarnedPoint::create([
+                'gratitudeNumber' => $gratitudeNumber,
+                'date' => Carbon::parse('2026-01-01'),
+                'usable_date' => Carbon::parse('2026-01-01'),
+                'points' => 500,
+                'status' => 'active',
+                'description' => 'First available batch',
+                'expires_at' => Carbon::parse('2026-12-31'),
+            ]);
+
+            $futurePoint = BonusPoint::create([
+                'gratitudeNumber' => $gratitudeNumber,
+                'date' => Carbon::parse('2026-03-01'),
+                'usable_date' => Carbon::parse('2026-03-01'),
+                'points' => 500,
+                'status' => true,
+                'description' => 'Future bonus batch',
+                'expires_at' => Carbon::parse('2026-12-31'),
+            ]);
+
+            $redemption = $this->gratitudeService->redeemPoints($gratitudeNumber, [
+                'date' => '2026-02-01',
+                'reason' => 'Historical redemption',
+                'redemption_type' => 'partner',
+            ], 400);
+        } finally {
+            Carbon::setTestNow();
+        }
+
+        $this->assertNotFalse($redemption);
+
+        $redemption->refresh();
+        $firstPoint->refresh();
+        $futurePoint->refresh();
+        $detail = RedeemPointsDetails::where('redeem_id', $redemption->id)->firstOrFail();
+
+        $this->assertEquals('2026-02-01', $redemption->created_at->toDateString());
+        $this->assertEquals('2026-02-01', $redemption->points_breakdown['redemption_date']);
+        $this->assertEquals(400, $firstPoint->redeemed_points);
+        $this->assertEquals(0, $futurePoint->redeemed_points);
+        $this->assertEquals('2026-02-01', $detail->created_at->toDateString());
+        $this->assertEquals('2026-02-01', $detail->points_breakdown['date']);
+        $this->assertEquals('2026-02-01', $firstPoint->redemption_history[0]['date']);
     }
 
     public function test_imported_redemptions_are_rebuilt_using_redemption_date_level_and_usable_points()
