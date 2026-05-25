@@ -5,6 +5,10 @@ namespace Database\Seeders;
 use App\Models\User;
 // use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\Hash;
+use Spatie\Permission\Models\Permission;
+use Spatie\Permission\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
 
 class DatabaseSeeder extends Seeder
 {
@@ -13,7 +17,7 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
+        app()[PermissionRegistrar::class]->forgetCachedPermissions();
 
         // Create initial permissions
         $permissions = [
@@ -45,23 +49,35 @@ class DatabaseSeeder extends Seeder
         ];
 
         foreach ($permissions as $permission) {
-            \Spatie\Permission\Models\Permission::firstOrCreate(['name' => $permission]);
+            Permission::firstOrCreate(['name' => $permission]);
         }
 
         // Create Super Admin role and assign all permissions
-        $superAdminRole = \Spatie\Permission\Models\Role::firstOrCreate(['name' => 'Super Admin']);
-        $superAdminRole->syncPermissions(\Spatie\Permission\Models\Permission::all());
+        $superAdminRole = Role::firstOrCreate(['name' => 'Super Admin']);
+        $superAdminRole->syncPermissions(Permission::all());
 
-        $developerRole = \Spatie\Permission\Models\Role::firstOrCreate(['name' => 'Developer']);
+        $developerRole = Role::firstOrCreate(['name' => 'Developer']);
         $developerRole->syncPermissions(['gratitude:import']);
 
+        $seededUserEmail = env('SEEDED_USER_EMAIL');
+        $seededUserPassword = env('SEEDED_USER_PASSWORD');
+        $seededUserFirstName = env('SEEDED_USER_FIRST_NAME', 'IT');
+        $seededUserLastName = env('SEEDED_USER_LAST_NAME', 'AIv');
+        $seededUserName = env('SEEDED_USER_NAME', 'IT AIv');
+
+        throw_if(
+            blank($seededUserEmail) || blank($seededUserPassword),
+            \RuntimeException::class,
+            'SEEDED_USER_EMAIL and SEEDED_USER_PASSWORD must be set before seeding users.'
+        );
+
         $user = User::firstOrCreate(
-            ['email' => 'it@artinvoyage.com'],
+            ['email' => $seededUserEmail],
             [
-                'first_name' => 'IT',
-                'last_name' => 'AIv',
-                'name' => 'IT AIv',
-                'password' => \Illuminate\Support\Facades\Hash::make('qwertyuiop@2026gratitude'),
+                'first_name' => $seededUserFirstName,
+                'last_name' => $seededUserLastName,
+                'name' => $seededUserName,
+                'password' => Hash::make($seededUserPassword),
                 'status' => 'active',
             ]
         );

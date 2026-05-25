@@ -424,6 +424,163 @@ class GratitudeServiceTest extends TestCase
         $this->assertEquals('downgrade', $gratitude->statusChange);
     }
 
+    public function test_tier_upgrade_uses_qualification_date_even_when_recalculated_after_cycle_end()
+    {
+        $gratitude = Gratitude::where('gratitudeNumber', $this->gratitudeNumber)->firstOrFail();
+        $gratitude->update([
+            'level' => 'Explorer',
+            'levelHistory' => null,
+            'level_obtained_at' => Carbon::parse('2024-01-01'),
+            'systemLevelUpdate' => true,
+        ]);
+
+        EarnedPoint::create([
+            'gratitudeNumber' => $this->gratitudeNumber,
+            'journey_id' => 1701,
+            'date' => '2024-05-25',
+            'points' => 16000,
+            'status' => true,
+            'usable_date' => '2024-06-01',
+        ]);
+
+        $updated = $this->tierService->recalculateTier(
+            $this->gratitudeNumber,
+            'system',
+            Carbon::parse('2026-01-02')
+        );
+
+        $this->assertEquals('Globetrotter', $updated->level);
+        $this->assertEquals('upgrade', $updated->statusChange);
+        $this->assertEquals('2024-06-01', $updated->level_obtained_at->toDateString());
+        $this->assertEquals('2024-06-01', collect($updated->levelHistory)->last()['date']);
+    }
+
+    public function test_manual_level_changes_are_kept_until_import_resets_system_management()
+    {
+        $gratitude = Gratitude::where('gratitudeNumber', $this->gratitudeNumber)->firstOrFail();
+
+        $manual = $this->tierService->setLevelManually($gratitude, 'Globetrotter', 'admin', 'Manual correction');
+
+        $this->assertFalse($manual->systemLevelUpdate);
+
+        EarnedPoint::create([
+            'gratitudeNumber' => $this->gratitudeNumber,
+            'journey_id' => 1702,
+            'date' => Carbon::today(),
+            'points' => 16000,
+            'status' => true,
+            'usable_date' => Carbon::today(),
+        ]);
+        EarnedPoint::create([
+            'gratitudeNumber' => $this->gratitudeNumber,
+            'journey_id' => 1703,
+            'date' => Carbon::today(),
+            'points' => 15001,
+            'status' => true,
+            'usable_date' => Carbon::today(),
+        ]);
+
+        $updated = $this->tierService->recalculateTier($this->gratitudeNumber);
+
+        $this->assertEquals('Globetrotter', $updated->level);
+        $this->assertFalse($updated->systemLevelUpdate);
+
+        $updated->forceFill(['old_id' => 1704])->save();
+
+        $this->gratitudeService->import([
+            [
+                'id' => 1704,
+                'gratitudeNumber' => $this->gratitudeNumber,
+                'status' => 'active',
+            ],
+        ]);
+
+        $updated->refresh();
+
+        $this->assertTrue($updated->systemLevelUpdate);
+    }
+
+    public function test_manual_level_override_returns_to_system_management_after_configured_cycle()
+    {
+        $gratitude = Gratitude::where('gratitudeNumber', $this->gratitudeNumber)->firstOrFail();
+
+        Carbon::setTestNow(Carbon::parse('2026-01-01 09:00:00'));
+
+        try {
+            $manual = $this->tierService->setLevelManually($gratitude, 'Globetrotter', 'admin', 'Manual correction');
+        } finally {
+            Carbon::setTestNow();
+        }
+
+        $this->assertFalse($manual->systemLevelUpdate);
+        $this->assertEquals('2026-01-01', $manual->level_obtained_at->toDateString());
+
+        EarnedPoint::create([
+            'gratitudeNumber' => $this->gratitudeNumber,
+            'journey_id' => 1710,
+            'date' => '2026-01-10',
+            'points' => 16000,
+            'status' => true,
+            'usable_date' => '2026-01-10',
+        ]);
+        EarnedPoint::create([
+            'gratitudeNumber' => $this->gratitudeNumber,
+            'journey_id' => 1711,
+            'date' => '2026-02-01',
+            'points' => 15001,
+            'status' => true,
+            'usable_date' => '2026-02-01',
+        ]);
+
+        $beforeCycleEnd = $this->tierService->recalculateTier(
+            $this->gratitudeNumber,
+            'scheduled_cycle_check',
+            Carbon::parse('2027-12-31')
+        );
+
+        $this->assertFalse($beforeCycleEnd->systemLevelUpdate);
+        $this->assertEquals('Globetrotter', $beforeCycleEnd->level);
+
+        $afterCycleEnd = $this->tierService->recalculateTier(
+            $this->gratitudeNumber,
+            'scheduled_cycle_check',
+            Carbon::parse('2028-01-02')
+        );
+
+        $this->assertTrue($afterCycleEnd->systemLevelUpdate);
+        $this->assertEquals('Jetsetter', $afterCycleEnd->level);
+        $this->assertEquals('upgrade', $afterCycleEnd->statusChange);
+        $this->assertEquals('2026-02-01', $afterCycleEnd->level_obtained_at->toDateString());
+    }
+
+    public function test_manual_level_override_cycle_restarts_when_changed_manually_again()
+    {
+        $gratitude = Gratitude::where('gratitudeNumber', $this->gratitudeNumber)->firstOrFail();
+
+        try {
+            Carbon::setTestNow(Carbon::parse('2026-01-01 09:00:00'));
+            $this->tierService->setLevelManually($gratitude, 'Globetrotter', 'admin', 'Manual correction');
+
+            Carbon::setTestNow(Carbon::parse('2027-06-01 09:00:00'));
+            $manual = $this->tierService->setLevelManually($gratitude->fresh(), 'Explorer', 'admin', 'Manual renewal');
+        } finally {
+            Carbon::setTestNow();
+        }
+
+        $this->assertFalse($manual->systemLevelUpdate);
+        $this->assertEquals('Explorer', $manual->level);
+        $this->assertEquals('2027-06-01', $manual->level_obtained_at->toDateString());
+
+        $reviewed = $this->tierService->recalculateTier(
+            $this->gratitudeNumber,
+            'scheduled_cycle_check',
+            Carbon::parse('2028-01-02')
+        );
+
+        $this->assertFalse($reviewed->systemLevelUpdate);
+        $this->assertEquals('Explorer', $reviewed->level);
+    }
+
     public function test_partial_cancellation_only_removes_remaining_points()
     {
         $point = EarnedPoint::create([
@@ -1251,6 +1408,35 @@ class GratitudeServiceTest extends TestCase
             'description' => 'Expired points',
         ]);
 
+        $reasonMatchedCancellation = Cancellation::create([
+            'old_id' => 704,
+            'gratitudeNumber' => $gratitudeNumber,
+            'points' => 150,
+            'description' => 'Legacy birthday point removal',
+        ]);
+
+        $earnedPoint = EarnedPoint::create([
+            'old_id' => 705,
+            'gratitudeNumber' => $gratitudeNumber,
+            'cancel_id' => $reasonMatchedCancellation->id,
+            'points' => 1000,
+            'cancelled_points' => 150,
+            'date' => Carbon::today(),
+            'usable_date' => Carbon::today(),
+            'status' => true,
+        ]);
+
+        $bonusPoint = BonusPoint::create([
+            'old_id' => 706,
+            'gratitudeNumber' => $gratitudeNumber,
+            'cancel_id' => $reasonMatchedCancellation->id,
+            'points' => 500,
+            'cancelled_points' => 150,
+            'date' => Carbon::today(),
+            'usable_date' => Carbon::today(),
+            'status' => true,
+        ]);
+
         $this->gratitudeService->import([
             [
                 'id' => 989,
@@ -1278,6 +1464,20 @@ class GratitudeServiceTest extends TestCase
                         'description' => 'points expired (+2 years)',
                         'date' => Carbon::today()->toDateTimeString(),
                     ],
+                    [
+                        'id' => 704,
+                        'gratitudeNumber' => $gratitudeNumber,
+                        'points' => 150,
+                        'reason' => 'No longer awarding birthday points',
+                        'date' => Carbon::today()->toDateTimeString(),
+                    ],
+                    [
+                        'id' => 707,
+                        'gratitudeNumber' => $gratitudeNumber,
+                        'points' => 100,
+                        'description' => 'Points will expire after 2 years',
+                        'date' => Carbon::today()->toDateTimeString(),
+                    ],
                 ],
             ],
         ]);
@@ -1294,6 +1494,22 @@ class GratitudeServiceTest extends TestCase
             'old_id' => 703,
             'gratitudeNumber' => $gratitudeNumber,
         ]);
+        $this->assertDatabaseMissing('cancellations', [
+            'old_id' => 704,
+            'gratitudeNumber' => $gratitudeNumber,
+        ]);
+        $this->assertDatabaseMissing('cancellations', [
+            'old_id' => 707,
+            'gratitudeNumber' => $gratitudeNumber,
+        ]);
+
+        $earnedPoint->refresh();
+        $bonusPoint->refresh();
+
+        $this->assertNull($earnedPoint->cancel_id);
+        $this->assertEquals(0, $earnedPoint->cancelled_points);
+        $this->assertNull($bonusPoint->cancel_id);
+        $this->assertEquals(0, $bonusPoint->cancelled_points);
     }
 
     public function test_import_records_source_dates_for_valid_cancellations()
@@ -1352,57 +1568,61 @@ class GratitudeServiceTest extends TestCase
 
         Carbon::setTestNow(Carbon::parse('2026-05-05 12:00:00'));
 
-        try {
-            $this->gratitudeService->import([
-                [
-                    'id' => 991,
-                    'gratitudeNumber' => $gratitudeNumber,
-                    'level' => 'Explorer',
-                    'bonusPoints' => [
-                        [
-                            'id' => 901,
-                            'gratitudeNumber' => $gratitudeNumber,
-                            'points' => 50000,
-                            'date' => '2026-01-05 00:00:00',
-                            'description' => 'Bonus should not update level',
-                            'status' => true,
-                        ],
-                    ],
-                    'earnedPoints' => [
-                        [
-                            'id' => 902,
-                            'gratitudeNumber' => $gratitudeNumber,
-                            'journey_id' => 9901,
-                            'points' => 100,
-                            'date' => '2026-01-01 00:00:00',
-                            'description' => 'First effective journey',
-                            'status' => 'active',
-                        ],
-                        [
-                            'id' => 903,
-                            'gratitudeNumber' => $gratitudeNumber,
-                            'journey_id' => 9902,
-                            'points' => 15000,
-                            'date' => '2026-02-01 00:00:00',
-                            'description' => 'Second effective journey',
-                            'status' => 'active',
-                        ],
-                        [
-                            'id' => 904,
-                            'gratitudeNumber' => $gratitudeNumber,
-                            'journey_id' => 9903,
-                            'points' => 40000,
-                            'date' => '2026-05-01 00:00:00',
-                            'description' => 'Future journey',
-                            'status' => 'active',
-                        ],
+        $records = [
+            [
+                'id' => 991,
+                'gratitudeNumber' => $gratitudeNumber,
+                'level' => 'Explorer',
+                'bonusPoints' => [
+                    [
+                        'id' => 901,
+                        'gratitudeNumber' => $gratitudeNumber,
+                        'points' => 50000,
+                        'date' => '2026-01-05 00:00:00',
+                        'description' => 'Bonus should not update level',
+                        'status' => true,
                     ],
                 ],
-            ], [
-                9901 => ['id' => 9901, 'endDate' => '2026-01-10'],
-                9902 => ['id' => 9902, 'endDate' => '2026-02-10'],
-                9903 => ['id' => 9903, 'endDate' => '2026-05-15'],
-            ]);
+                'earnedPoints' => [
+                    [
+                        'id' => 902,
+                        'gratitudeNumber' => $gratitudeNumber,
+                        'journey_id' => 9901,
+                        'points' => 100,
+                        'date' => '2026-01-01 00:00:00',
+                        'description' => 'First effective journey',
+                        'status' => 'active',
+                    ],
+                    [
+                        'id' => 903,
+                        'gratitudeNumber' => $gratitudeNumber,
+                        'journey_id' => 9902,
+                        'points' => 15000,
+                        'date' => '2026-02-01 00:00:00',
+                        'description' => 'Second effective journey',
+                        'status' => 'active',
+                    ],
+                    [
+                        'id' => 904,
+                        'gratitudeNumber' => $gratitudeNumber,
+                        'journey_id' => 9903,
+                        'points' => 40000,
+                        'date' => '2026-05-01 00:00:00',
+                        'description' => 'Future journey',
+                        'status' => 'active',
+                    ],
+                ],
+            ],
+        ];
+        $journeysMap = [
+            9901 => ['id' => 9901, 'endDate' => '2026-01-10'],
+            9902 => ['id' => 9902, 'endDate' => '2026-02-10'],
+            9903 => ['id' => 9903, 'endDate' => '2026-05-15'],
+        ];
+
+        try {
+            $this->gratitudeService->import($records, $journeysMap);
+            $this->gratitudeService->import($records, $journeysMap);
         } finally {
             Carbon::setTestNow();
         }

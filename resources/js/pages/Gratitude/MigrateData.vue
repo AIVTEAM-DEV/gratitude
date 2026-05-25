@@ -30,7 +30,7 @@ type ImportAction = {
 
 const breadcrumbs: BreadcrumbItem[] = [
     { title: 'Home', href: '/dashboard' },
-    { title: 'Gratitude Program', href: '/gratitude' },
+    { title: 'Developer', href: '/gratitude/migrate-data' },
     { title: 'Migrate Data', href: '/gratitude/migrate-data' },
 ];
 
@@ -58,24 +58,24 @@ const actions: ImportAction[] = [
         buttonLabel: 'Import Inactive',
         confirmLabel: 'inactive gratitude table',
     },
-    {
-        key: 'accounts-active',
-        title: 'Active Account Data',
-        description: 'Detailed points and guest data',
-        endpoint: '/internal-api/gratitude/migrate-account-data/active',
-        method: 'get',
-        buttonLabel: 'Import Active Data',
-        confirmLabel: 'active account data',
-    },
-    {
-        key: 'accounts-inactive',
-        title: 'Inactive Account Data',
-        description: 'Inactive detailed account data',
-        endpoint: '/internal-api/gratitude/migrate-account-data/inactive',
-        method: 'get',
-        buttonLabel: 'Import Inactive Data',
-        confirmLabel: 'inactive account data',
-    },
+    // {
+    //     key: 'accounts-active',
+    //     title: 'Active Account Data',
+    //     description: 'Detailed points and guest data',
+    //     endpoint: '/internal-api/gratitude/migrate-account-data/active',
+    //     method: 'get',
+    //     buttonLabel: 'Import Active Data',
+    //     confirmLabel: 'active account data',
+    // },
+    // {
+    //     key: 'accounts-inactive',
+    //     title: 'Inactive Account Data',
+    //     description: 'Inactive detailed account data',
+    //     endpoint: '/internal-api/gratitude/migrate-account-data/inactive',
+    //     method: 'get',
+    //     buttonLabel: 'Import Inactive Data',
+    //     confirmLabel: 'inactive account data',
+    // },
     {
         key: 'benefits',
         title: 'Benefits',

@@ -38,6 +38,8 @@ return [
     'aivteam' => [
         'access_token' => env('AIVTEAM_ACCESS_TOKEN'),
         'base_url' => env('AIVTEAM_BASE_URL', 'https://aivteam.com'),
+        'import_chunk_size' => env('GRATITUDE_IMPORT_CHUNK_SIZE', 10),
+        'import_concurrency' => env('GRATITUDE_IMPORT_CONCURRENCY', 2),
     ],
 
     'anthropic' => [

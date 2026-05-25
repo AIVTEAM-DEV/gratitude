@@ -1,7 +1,9 @@
 <?php
 
 use App\Http\Controllers\ActivityLogController as ActivityLogPageController;
+use App\Http\Controllers\Developer\DebugLogController as DebugLogPageController;
 use App\Http\Controllers\InternalApi\ActivityLogController as InternalActivityLogController;
+use App\Http\Controllers\InternalApi\Developer\DebugLogController as InternalDebugLogController;
 use App\Http\Middleware\ValidateBearerToken;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Support\Facades\Route;
@@ -11,6 +13,7 @@ Route::redirect('/', '/dashboard')->name('home');
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::inertia('dashboard', 'Dashboard')->name('dashboard');
     Route::get('/logs', [ActivityLogPageController::class, 'index'])->name('logs.index');
+    Route::get('/developer/debug-logs', [DebugLogPageController::class, 'index'])->name('developer.debug-logs');
 
     require __DIR__.'/users/web.php';
     require __DIR__.'/gratitude/web.php';
@@ -27,6 +30,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::delete('/prune/old', [InternalActivityLogController::class, 'prune'])->name('prune');
             Route::delete('/{activityLog}', [InternalActivityLogController::class, 'destroy'])->name('destroy');
         });
+
+        Route::get('/developer/debug-logs', [InternalDebugLogController::class, 'index'])
+            ->name('developer.debug-logs');
+        Route::delete('/developer/debug-logs', [InternalDebugLogController::class, 'destroy'])
+            ->name('developer.debug-logs.destroy');
     });
 });
 

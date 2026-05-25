@@ -28,7 +28,7 @@ class TierService
                 ->lockForUpdate()
                 ->first();
 
-            if (! $gratitude || ! $gratitude->systemLevelUpdate) {
+            if (! $gratitude) {
                 return $gratitude;
             }
 
@@ -37,25 +37,56 @@ class TierService
                 return $gratitude;
             }
 
+            if (! $gratitude->systemLevelUpdate) {
+                if (! $this->manualOverrideCycleExpired($gratitude, $levels, $asOf)) {
+                    return $gratitude;
+                }
+
+                $gratitude->forceFill(['systemLevelUpdate' => true])->save();
+                $gratitude->refresh();
+            }
+
             $this->ensureInitialLevel($gratitude, $levels, $asOf, $changedBy);
             $gratitude->refresh();
 
             $iterations = 0;
-            while ($iterations < 10) {
+            while ($iterations < 20) {
                 [$cycleStart, $cycleEnd] = $this->cycleWindow($gratitude, $levels, $asOf);
+                $reviewEnd = $asOf->lt($cycleEnd) ? $asOf->copy() : $cycleEnd->copy();
+                $oldLevel = $gratitude->level ?? $this->defaultLevelName($levels);
+                $metrics = $this->cycleMetrics($gratitude->gratitudeNumber, $cycleStart, $reviewEnd);
+                $targetLevel = $this->resolveLevelForMetrics($metrics['earned_points'], $metrics['journey_count'], $levels);
+                $newLevel = $this->nextHigherLevel($oldLevel, $targetLevel, $levels);
+
+                if ($newLevel !== null) {
+                    $qualification = $this->qualificationSnapshot($gratitude->gratitudeNumber, $cycleStart, $reviewEnd, $newLevel, $levels);
+                    $effectiveAt = $qualification['date'] ?? $reviewEnd;
+
+                    $this->applyLevelChange(
+                        $gratitude,
+                        $oldLevel,
+                        $newLevel,
+                        $qualification['metrics'] ?? $metrics,
+                        $changedBy,
+                        $effectiveAt,
+                        $effectiveAt,
+                        'threshold_upgrade'
+                    );
+
+                    $gratitude->refresh();
+                    $iterations++;
+
+                    continue;
+                }
 
                 if ($asOf->lt($cycleEnd)) {
                     break;
                 }
 
-                $metrics = $this->cycleMetrics($gratitude->gratitudeNumber, $cycleStart, $cycleEnd);
-                $newLevel = $this->resolveLevelForMetrics($metrics['earned_points'], $metrics['journey_count'], $levels);
-                $oldLevel = $gratitude->level ?? $this->defaultLevelName($levels);
-
                 $this->applyLevelChange(
                     $gratitude,
                     $oldLevel,
-                    $newLevel,
+                    $targetLevel,
                     $metrics,
                     $changedBy,
                     $cycleEnd,
@@ -65,36 +96,6 @@ class TierService
 
                 $gratitude->refresh();
                 $iterations++;
-            }
-
-            $upgradeIterations = 0;
-            while ($upgradeIterations < 10) {
-                [$cycleStart] = $this->cycleWindow($gratitude, $levels, $asOf);
-                $metrics = $this->cycleMetrics($gratitude->gratitudeNumber, $cycleStart, $asOf);
-                $oldLevel = $gratitude->level ?? $this->defaultLevelName($levels);
-                $targetLevel = $this->resolveLevelForMetrics($metrics['earned_points'], $metrics['journey_count'], $levels);
-                $newLevel = $this->nextHigherLevel($oldLevel, $targetLevel, $levels);
-
-                if ($newLevel === null) {
-                    break;
-                }
-
-                $qualification = $this->qualificationSnapshot($gratitude->gratitudeNumber, $cycleStart, $asOf, $newLevel, $levels);
-                $effectiveAt = $qualification['date'] ?? $asOf;
-
-                $this->applyLevelChange(
-                    $gratitude,
-                    $oldLevel,
-                    $newLevel,
-                    $qualification['metrics'] ?? $metrics,
-                    $changedBy,
-                    $effectiveAt,
-                    $effectiveAt,
-                    'threshold_upgrade'
-                );
-
-                $gratitude->refresh();
-                $upgradeIterations++;
             }
 
             return $gratitude->fresh();
@@ -108,7 +109,6 @@ class TierService
 
         Gratitude::query()
             ->whereNotNull('gratitudeNumber')
-            ->where('systemLevelUpdate', true)
             ->orderBy('id')
             ->chunkById(100, function ($gratitudes) use (&$count, $asOf) {
                 foreach ($gratitudes as $gratitude) {
@@ -202,6 +202,17 @@ class TierService
         return GratitudeLevel::where('status', true)
             ->orderBy('min_points')
             ->get();
+    }
+
+    private function manualOverrideCycleExpired(Gratitude $gratitude, Collection $levels, CarbonInterface $asOf): bool
+    {
+        $currentLevel = $levels->firstWhere('name', $gratitude->level) ?? $levels->first();
+        $years = max(1, (int) ($currentLevel?->level_interval_years ?: 2));
+        $start = $gratitude->level_obtained_at
+            ? Carbon::parse($gratitude->level_obtained_at)
+            : ($gratitude->updated_at ? Carbon::parse($gratitude->updated_at) : Carbon::now());
+
+        return Carbon::parse($asOf)->gte($start->copy()->addYears($years));
     }
 
     private function ensureInitialLevel(Gratitude $gratitude, Collection $levels, Carbon $asOf, string $changedBy): void
@@ -393,7 +404,7 @@ class TierService
         ?string $changeType,
         ?string $reason = null
     ): array {
-        $history[] = [
+        $entry = [
             'fromLevel' => $fromLevel,
             'toLevel' => $toLevel,
             'changeType' => $changeType ?? 'maintained',
@@ -404,7 +415,31 @@ class TierService
             'reason' => $reason ?? $this->buildChangeReason($changeType, $fromLevel, $toLevel, $metrics, 'cycle_review'),
         ];
 
-        return $history;
+        foreach ($history as $index => $existingEntry) {
+            if (! is_array($existingEntry)) {
+                continue;
+            }
+
+            $existingDate = ! empty($existingEntry['date'])
+                ? Carbon::parse($existingEntry['date'])->toDateString()
+                : null;
+            $existingToLevel = $existingEntry['toLevel'] ?? $existingEntry['level'] ?? null;
+            $existingChangeType = $existingEntry['changeType'] ?? null;
+
+            if (
+                $existingDate === $entry['date']
+                && $existingToLevel === $entry['toLevel']
+                && $existingChangeType === $entry['changeType']
+            ) {
+                $history[$index] = array_merge($existingEntry, $entry);
+
+                return array_values($history);
+            }
+        }
+
+        $history[] = $entry;
+
+        return array_values($history);
     }
 
     private function determineStatusChange(string $oldLevel, string $newLevel): ?string

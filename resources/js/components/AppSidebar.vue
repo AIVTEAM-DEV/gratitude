@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Link, usePage } from '@inertiajs/vue3';
 import {
+    Bug,
     HeartHandshake,
     LayoutGrid,
     ScrollText,
@@ -43,9 +44,6 @@ const mainNavItems = computed<NavItem[]>(() => [
             { title: 'Levels', href: '/gratitude/levels' },
             { title: 'Benefits', href: '/gratitude/benefits' },
             { title: 'Point Reserve', href: '/gratitude/reserve' },
-            ...(canImportGratitude.value
-                ? [{ title: 'Migrate Data', href: '/gratitude/migrate-data' }]
-                : []),
             {
                 title: 'Level Benefit Matrix',
                 href: '/gratitude/program-level-benefits',
@@ -64,6 +62,25 @@ const mainNavItems = computed<NavItem[]>(() => [
             { title: 'Logs', href: '/logs', icon: ScrollText },
         ],
     },
+    ...(canImportGratitude.value
+        ? [
+              {
+                  title: 'Developer',
+                  href: '#',
+                  icon: Bug,
+                  children: [
+                      {
+                          title: 'Migrate Data',
+                          href: '/gratitude/migrate-data',
+                      },
+                      {
+                          title: 'Debug Logs',
+                          href: '/developer/debug-logs',
+                      },
+                  ],
+              },
+          ]
+        : []),
 ]);
 
 // const footerNavItems: NavItem[] = [
