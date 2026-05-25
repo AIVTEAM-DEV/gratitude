@@ -63,15 +63,22 @@ class DatabaseSeeder extends Seeder
         $seededUserPassword = env('SEEDED_USER_PASSWORD');
         $seededUserFirstName = env('SEEDED_USER_FIRST_NAME', 'IT');
         $seededUserLastName = env('SEEDED_USER_LAST_NAME', 'AIv');
-        $seededUserName = env('SEEDED_USER_NAME', 'IT AIv');
+        $seededUserName = env('SEEDED_USER_NAME') ?: trim("{$seededUserFirstName} {$seededUserLastName}");
+        $seededUserRoles = collect(explode(',', env('SEEDED_USER_ROLES', 'Super Admin,Developer')))
+            ->map(fn (string $role) => trim($role))
+            ->filter()
+            ->unique()
+            ->values();
 
         throw_if(
-            blank($seededUserEmail) || blank($seededUserPassword),
+            blank($seededUserEmail) || blank($seededUserPassword) || $seededUserRoles->isEmpty(),
             \RuntimeException::class,
-            'SEEDED_USER_EMAIL and SEEDED_USER_PASSWORD must be set before seeding users.'
+            'SEEDED_USER_EMAIL, SEEDED_USER_PASSWORD, and SEEDED_USER_ROLES must be set before seeding users.'
         );
 
-        $user = User::firstOrCreate(
+        $seededUserRoles->each(fn (string $role) => Role::firstOrCreate(['name' => $role]));
+
+        $user = User::updateOrCreate(
             ['email' => $seededUserEmail],
             [
                 'first_name' => $seededUserFirstName,
@@ -82,8 +89,7 @@ class DatabaseSeeder extends Seeder
             ]
         );
 
-        $user->assignRole($superAdminRole);
-        $user->assignRole($developerRole);
+        $user->assignRole($seededUserRoles->all());
 
         $this->call(GratitudeLevelSeeder::class);
     }
