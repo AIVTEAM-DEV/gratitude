@@ -47,6 +47,12 @@ const columns = [
         align: 'right' as const,
     },
     {
+        key: 'dollar_value',
+        label: 'Dollar Value',
+        sortable: true,
+        align: 'right' as const,
+    },
+    {
         key: 'pending_points',
         label: 'Pending Points',
         sortable: true,
@@ -239,6 +245,14 @@ const levelIconUrl = (row: any) => {
 const formatNumber = (val: any) => {
     const n = Number(val || 0);
     return new Intl.NumberFormat('en-US').format(n);
+};
+
+const formatMoney = (val: any) => {
+    return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        maximumFractionDigits: 2,
+    }).format(Number(val || 0));
 };
 
 const formatDate = (val: any) => {
@@ -494,6 +508,9 @@ const recalculateLevel = async (gratitudeNumber: string) => {
                     </template>
                     <template #cell-useablePoints="{ row }">
                         {{ formatNumber(row.useablePoints) }}
+                    </template>
+                    <template #cell-dollar_value="{ row }">
+                        {{ formatMoney(row.dollar_value) }}
                     </template>
                     <template #cell-total_balance="{ row }">
                         {{ formatNumber(row.total_balance) }}

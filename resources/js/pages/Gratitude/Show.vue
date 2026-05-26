@@ -74,6 +74,7 @@ const data = ref<any>({
     level_benefits: [],
     points_per_dollar: 35,
     partner_points_per_dollar: 35,
+    usable_points_dollar_value: 0,
     points_history: [],
     interval_start: null,
     interval_end: null,
@@ -141,6 +142,26 @@ const totalPoints = computed(() => {
 });
 const usablePoints = computed(() => {
     return data.value.gratitude?.useablePoints || 0;
+});
+const redemptionPointsPerDollar = computed(() =>
+    Math.max(
+        1,
+        Number(
+            data.value.redemption_points_per_dollar ||
+                data.value.points_per_dollar ||
+                35,
+        ),
+    ),
+);
+const usablePointsDollarValue = computed(() => {
+    if (
+        data.value.usable_points_dollar_value !== undefined &&
+        data.value.usable_points_dollar_value !== null
+    ) {
+        return Number(data.value.usable_points_dollar_value || 0);
+    }
+
+    return Number(usablePoints.value || 0) / redemptionPointsPerDollar.value;
 });
 const earnedExpireDays = computed(() =>
     Number(data.value.level_info?.earned_expire_days || 730),
@@ -447,6 +468,13 @@ const formatNumber = (num: number) => {
         maximumFractionDigits: 0,
     }).format(num);
 };
+
+const formatMoney = (value: number | string | null | undefined) =>
+    new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        maximumFractionDigits: 2,
+    }).format(Number(value || 0));
 
 const mediaUrl = (url?: string | null, path?: string | null) => {
     if (url) return url;
@@ -1060,12 +1088,7 @@ const exportPointsHistoryPdf = () => openPointsHistoryPrintWindow();
                         >
                         <span
                             class="mt-0.5 text-xs font-medium text-green-600/70 dark:text-green-400/70"
-                            >(${{
-                                (
-                                    usablePoints /
-                                    (data.points_per_dollar || 35)
-                                ).toFixed(2)
-                            }})</span
+                            >{{ formatMoney(usablePointsDollarValue) }}</span
                         >
                     </div>
                 </div>

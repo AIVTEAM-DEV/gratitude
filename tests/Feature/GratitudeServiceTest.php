@@ -187,22 +187,53 @@ class GratitudeServiceTest extends TestCase
         ]);
 
         Gratitude::where('gratitudeNumber', $this->gratitudeNumber)->update([
+            'totalPoints' => 70,
             'useablePoints' => 70,
             'level' => 'Explorer',
         ]);
 
         Gratitude::create([
             'gratitudeNumber' => 'G-OVERVIEW-2001',
+            'totalPoints' => 60,
             'useablePoints' => 60,
             'level' => 'Globetrotter',
             'level_obtained_at' => Carbon::today(),
+        ]);
+
+        Gratitude::create([
+            'gratitudeNumber' => 'G-OVERVIEW-INACTIVE',
+            'totalPoints' => 900,
+            'useablePoints' => 900,
+            'level' => 'Explorer',
+            'status' => 'inactive',
+            'is_active' => false,
+            'level_obtained_at' => Carbon::today(),
+        ]);
+
+        EarnedPoint::create([
+            'gratitudeNumber' => 'G-OVERVIEW-2001',
+            'date' => Carbon::today(),
+            'usable_date' => Carbon::tomorrow(),
+            'points' => 25,
+            'status' => true,
+        ]);
+
+        EarnedPoint::create([
+            'gratitudeNumber' => 'G-OVERVIEW-INACTIVE',
+            'date' => Carbon::today(),
+            'usable_date' => Carbon::tomorrow(),
+            'points' => 500,
+            'status' => true,
         ]);
 
         $response = $this->actingAs($this->user)->getJson('/internal-api/gratitude/overview');
 
         $response
             ->assertOk()
-            ->assertJsonPath('total_usable_points', 130);
+            ->assertJsonPath('total_accounts', 2)
+            ->assertJsonPath('total_point_balance', 130)
+            ->assertJsonPath('total_usable_points', 130)
+            ->assertJsonPath('total_pending_points', 25);
 
         $this->assertEquals(4, $response->json('total_usable_amount'));
     }
@@ -406,7 +437,7 @@ class GratitudeServiceTest extends TestCase
             'gratitudeNumber' => $this->gratitudeNumber,
             'journey_id' => 702,
             'date' => Carbon::today()->addDay(),
-            'points' => 15001,
+            'points' => 30001,
             'status' => 'active',
             'usable_date' => Carbon::today()->addDay(),
         ]);
@@ -417,11 +448,64 @@ class GratitudeServiceTest extends TestCase
 
         $p1->usable_date = Carbon::today()->subYears(3);
         $p1->save();
-        $gratitude->update(['level_obtained_at' => Carbon::today()->subYears(2)->subDay()]);
+        $gratitude->update(['level_obtained_at' => Carbon::today()->subYears(2)->subDays(3)]);
 
         $gratitude = $this->tierService->recalculateTier($this->gratitudeNumber);
         $this->assertEquals('Explorer', $gratitude->level);
         $this->assertEquals('downgrade', $gratitude->statusChange);
+    }
+
+    public function test_tier_recalculation_uses_remaining_points_after_tomorrow_when_earned_points_are_expiring_soon()
+    {
+        $asOf = Carbon::parse('2026-05-26 10:00:00');
+        $cycleStart = $asOf->copy()->subYear()->startOfDay();
+        $gratitude = Gratitude::where('gratitudeNumber', $this->gratitudeNumber)->firstOrFail();
+
+        $gratitude->update([
+            'level' => 'Globetrotter',
+            'level_obtained_at' => $cycleStart,
+            'systemLevelUpdate' => true,
+            'levelHistory' => [
+                [
+                    'fromLevel' => 'Explorer',
+                    'toLevel' => 'Globetrotter',
+                    'changeType' => 'upgrade',
+                    'date' => $cycleStart->toDateString(),
+                    'earnedPoints' => 16000,
+                    'journeyCount' => 1,
+                    'changedBy' => 'system',
+                    'reason' => 'Test setup',
+                ],
+            ],
+        ]);
+
+        EarnedPoint::create([
+            'gratitudeNumber' => $this->gratitudeNumber,
+            'journey_id' => 1705,
+            'date' => $cycleStart->copy()->addMonth(),
+            'usable_date' => $cycleStart->copy()->addMonth(),
+            'points' => 16000,
+            'status' => true,
+            'expires_at' => $asOf->copy()->addDay()->endOfDay(),
+        ]);
+
+        EarnedPoint::create([
+            'gratitudeNumber' => $this->gratitudeNumber,
+            'journey_id' => 1706,
+            'date' => $cycleStart->copy()->addMonths(2),
+            'usable_date' => $cycleStart->copy()->addMonths(2),
+            'points' => 5000,
+            'status' => true,
+            'expires_at' => $asOf->copy()->addMonth(),
+        ]);
+
+        $updated = $this->tierService->recalculateTier($this->gratitudeNumber, 'system', $asOf);
+        $latestHistory = collect($updated->levelHistory)->last();
+
+        $this->assertEquals('Explorer', $updated->level);
+        $this->assertEquals('downgrade', $updated->statusChange);
+        $this->assertEquals(5000, $latestHistory['earnedPoints']);
+        $this->assertStringContainsString('remaining eligible earned points', $updated->statusChangeReason);
     }
 
     public function test_tier_upgrade_uses_qualification_date_even_when_recalculated_after_cycle_end()
@@ -446,7 +530,7 @@ class GratitudeServiceTest extends TestCase
         $updated = $this->tierService->recalculateTier(
             $this->gratitudeNumber,
             'system',
-            Carbon::parse('2026-01-02')
+            Carbon::parse('2026-01-04')
         );
 
         $this->assertEquals('Globetrotter', $updated->level);
@@ -500,7 +584,7 @@ class GratitudeServiceTest extends TestCase
         $this->assertTrue($updated->systemLevelUpdate);
     }
 
-    public function test_manual_level_override_returns_to_system_management_after_configured_cycle()
+    public function test_manual_level_override_returns_to_system_management_after_configured_cycle_plus_grace_days()
     {
         $gratitude = Gratitude::where('gratitudeNumber', $this->gratitudeNumber)->firstOrFail();
 
@@ -541,10 +625,19 @@ class GratitudeServiceTest extends TestCase
         $this->assertFalse($beforeCycleEnd->systemLevelUpdate);
         $this->assertEquals('Globetrotter', $beforeCycleEnd->level);
 
-        $afterCycleEnd = $this->tierService->recalculateTier(
+        $duringGrace = $this->tierService->recalculateTier(
             $this->gratitudeNumber,
             'scheduled_cycle_check',
             Carbon::parse('2028-01-02')
+        );
+
+        $this->assertFalse($duringGrace->systemLevelUpdate);
+        $this->assertEquals('Globetrotter', $duringGrace->level);
+
+        $afterCycleEnd = $this->tierService->recalculateTier(
+            $this->gratitudeNumber,
+            'scheduled_cycle_check',
+            Carbon::parse('2028-01-04')
         );
 
         $this->assertTrue($afterCycleEnd->systemLevelUpdate);
@@ -961,6 +1054,43 @@ class GratitudeServiceTest extends TestCase
         $this->assertEquals(100, $redemption->points_breakdown['unallocated_points']);
         $this->assertEquals(500, $firstPoint->redeemed_points);
         $this->assertEquals(0, $secondPoint->redeemed_points);
+    }
+
+    public function test_imported_legacy_balance_transfer_earned_points_expire_on_december_31_2024()
+    {
+        $gratitudeNumber = 'G-IMPORT-BALANCE-TRANSFER';
+
+        $this->gratitudeService->import([
+            [
+                'id' => 986,
+                'gratitudeNumber' => $gratitudeNumber,
+                'level' => 'Explorer',
+                'earnedPoints' => [
+                    [
+                        'id' => 301,
+                        'gratitudeNumber' => $gratitudeNumber,
+                        'points' => 1200,
+                        'date' => '2026-01-01 00:00:00',
+                        'description' => 'Balance transfer from old system',
+                        'status' => 'active',
+                    ],
+                    [
+                        'id' => 302,
+                        'gratitudeNumber' => $gratitudeNumber,
+                        'points' => 300,
+                        'date' => '2026-01-01 00:00:00',
+                        'description' => 'Journey points',
+                        'status' => 'active',
+                    ],
+                ],
+            ],
+        ]);
+
+        $balanceTransferPoint = EarnedPoint::where('old_id', 301)->firstOrFail();
+        $normalPoint = EarnedPoint::where('old_id', 302)->firstOrFail();
+
+        $this->assertEquals('2024-12-31', $balanceTransferPoint->expires_at->toDateString());
+        $this->assertEquals('2028-01-01', $normalPoint->expires_at->toDateString());
     }
 
     public function test_import_skips_legacy_negative_expiration_rows()

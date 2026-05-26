@@ -19,6 +19,10 @@ class TierService
 
     public const TIER_JETSETTER = 'Jetsetter';
 
+    private const EXPIRING_LEVEL_REVIEW_LOOKAHEAD_DAYS = 1;
+
+    private const LEVEL_CYCLE_REVIEW_GRACE_DAYS = 2;
+
     public function recalculateTier($gratitudeNumber, string $changedBy = 'system', ?CarbonInterface $asOf = null): ?Gratitude
     {
         $asOf = $asOf ? Carbon::parse($asOf) : Carbon::now();
@@ -54,6 +58,30 @@ class TierService
                 [$cycleStart, $cycleEnd] = $this->cycleWindow($gratitude, $levels, $asOf);
                 $reviewEnd = $asOf->lt($cycleEnd) ? $asOf->copy() : $cycleEnd->copy();
                 $oldLevel = $gratitude->level ?? $this->defaultLevelName($levels);
+                $expiringSoonReview = $this->expiringSoonLevelReview($gratitude->gratitudeNumber, $cycleStart, $asOf);
+
+                if ($expiringSoonReview !== null) {
+                    $metrics = $expiringSoonReview['metrics'];
+                    $targetLevel = $this->resolveLevelForMetrics($metrics['earned_points'], $metrics['journey_count'], $levels);
+
+                    if ($targetLevel !== $oldLevel) {
+                        $this->applyLevelChange(
+                            $gratitude,
+                            $oldLevel,
+                            $targetLevel,
+                            $metrics,
+                            $changedBy,
+                            $asOf->copy(),
+                            $asOf->copy(),
+                            'expiry_review'
+                        );
+
+                        $gratitude->refresh();
+                    }
+
+                    break;
+                }
+
                 $metrics = $this->cycleMetrics($gratitude->gratitudeNumber, $cycleStart, $reviewEnd);
                 $targetLevel = $this->resolveLevelForMetrics($metrics['earned_points'], $metrics['journey_count'], $levels);
                 $newLevel = $this->nextHigherLevel($oldLevel, $targetLevel, $levels);
@@ -212,7 +240,7 @@ class TierService
             ? Carbon::parse($gratitude->level_obtained_at)
             : ($gratitude->updated_at ? Carbon::parse($gratitude->updated_at) : Carbon::now());
 
-        return Carbon::parse($asOf)->gte($start->copy()->addYears($years));
+        return Carbon::parse($asOf)->gte($this->configuredCycleEnd($start, $years));
     }
 
     private function ensureInitialLevel(Gratitude $gratitude, Collection $levels, Carbon $asOf, string $changedBy): void
@@ -249,7 +277,15 @@ class TierService
         $currentLevel = $levels->firstWhere('name', $gratitude->level) ?? $levels->first();
         $years = max(1, (int) ($currentLevel?->level_interval_years ?: 2));
 
-        return [$start, $start->copy()->addYears($years)];
+        return [$start, $this->configuredCycleEnd($start, $years)];
+    }
+
+    private function configuredCycleEnd(CarbonInterface $start, int $years): Carbon
+    {
+        return Carbon::parse($start)
+            ->copy()
+            ->addYears(max(1, $years))
+            ->addDays(self::LEVEL_CYCLE_REVIEW_GRACE_DAYS);
     }
 
     private function cycleStart(Gratitude $gratitude, Carbon $asOf): Carbon
@@ -271,10 +307,54 @@ class TierService
 
     private function cycleMetrics(string $gratitudeNumber, CarbonInterface $from, CarbonInterface $to): array
     {
-        $earnedPoints = (int) EarnedPoint::qualifyingForLevel($gratitudeNumber, $from, $to)
-            ->sum(DB::raw('CASE WHEN COALESCE(points, 0) - COALESCE(cancelled_points, 0) > 0 THEN COALESCE(points, 0) - COALESCE(cancelled_points, 0) ELSE 0 END'));
+        return $this->remainingCycleMetrics($gratitudeNumber, $from, $to);
+    }
 
-        $journeyCount = (int) EarnedPoint::qualifyingForLevel($gratitudeNumber, $from, $to)
+    private function expiringSoonLevelReview(string $gratitudeNumber, CarbonInterface $from, Carbon $asOf): ?array
+    {
+        $windowStart = $asOf->copy()->startOfDay();
+        $reviewCutoff = $asOf->copy()
+            ->addDays(self::EXPIRING_LEVEL_REVIEW_LOOKAHEAD_DAYS)
+            ->endOfDay();
+
+        if (! $this->hasEarnedPointsExpiringForLevelReview($gratitudeNumber, $windowStart, $reviewCutoff, $asOf)) {
+            return null;
+        }
+
+        return [
+            'metrics' => $this->remainingCycleMetrics($gratitudeNumber, $from, $reviewCutoff),
+            'review_cutoff' => $reviewCutoff,
+        ];
+    }
+
+    private function hasEarnedPointsExpiringForLevelReview(
+        string $gratitudeNumber,
+        CarbonInterface $from,
+        CarbonInterface $to,
+        CarbonInterface $asOf
+    ): bool {
+        return EarnedPoint::where('gratitudeNumber', $gratitudeNumber)
+            ->whereNull('cancel_id')
+            ->whereNotNull('expires_at')
+            ->where('expires_at', '>=', $from)
+            ->where('expires_at', '<=', $to)
+            ->whereRaw($this->remainingPointsExpression())
+            ->where(function ($query) use ($asOf) {
+                $query->activeStatus()
+                    ->orWhere('expires_at', '<', $asOf);
+            })
+            ->exists();
+    }
+
+    private function remainingCycleMetrics(string $gratitudeNumber, CarbonInterface $from, CarbonInterface $to): array
+    {
+        $query = $this->remainingEarnedPointsForLevelQuery($gratitudeNumber, $from, $to);
+
+        $earnedPoints = (int) $query
+            ->sum(DB::raw('CASE WHEN '.$this->remainingPointsExpression().' THEN COALESCE(points, 0) - COALESCE(redeemed_points, 0) - COALESCE(cancelled_points, 0) ELSE 0 END'));
+
+        $journeyCount = (int) $this->remainingEarnedPointsForLevelQuery($gratitudeNumber, $from, $to)
+            ->withRemainingPoints()
             ->whereNotNull('journey_id')
             ->distinct('journey_id')
             ->count('journey_id');
@@ -285,19 +365,42 @@ class TierService
         ];
     }
 
+    private function remainingEarnedPointsForLevelQuery(string $gratitudeNumber, CarbonInterface $from, CarbonInterface $to)
+    {
+        return EarnedPoint::where('gratitudeNumber', $gratitudeNumber)
+            ->activeStatus()
+            ->whereNull('cancel_id')
+            ->whereNotNull('usable_date')
+            ->where('usable_date', '>=', $from)
+            ->where('usable_date', '<=', $to)
+            ->where(function ($query) use ($to) {
+                $query->whereNull('expires_at')
+                    ->orWhere('expires_at', '>', $to);
+            });
+    }
+
+    private function remainingPointsExpression(): string
+    {
+        return 'COALESCE(points, 0) > COALESCE(redeemed_points, 0) + COALESCE(cancelled_points, 0)';
+    }
+
     private function qualificationSnapshot(string $gratitudeNumber, CarbonInterface $from, CarbonInterface $to, string $targetLevel, Collection $levels): array
     {
         $earnedPoints = 0;
         $journeys = [];
         $targetRank = $this->rank($targetLevel, $levels);
 
-        $points = EarnedPoint::qualifyingForLevel($gratitudeNumber, $from, $to)
+        $points = $this->remainingEarnedPointsForLevelQuery($gratitudeNumber, $from, $to)
+            ->withRemainingPoints()
             ->orderBy('usable_date')
             ->orderBy('id')
             ->get();
 
         foreach ($points as $point) {
-            $earnedPoints += max(0, (int) $point->points - (int) $point->cancelled_points);
+            $earnedPoints += max(
+                0,
+                (int) $point->points - (int) $point->redeemed_points - (int) $point->cancelled_points
+            );
 
             if ($point->journey_id) {
                 $journeys[(string) $point->journey_id] = true;
@@ -473,6 +576,15 @@ class TierService
     {
         $points = number_format((int) ($metrics['earned_points'] ?? 0));
         $journeys = (int) ($metrics['journey_count'] ?? 0);
+
+        if ($context === 'expiry_review') {
+            return match ($changeType) {
+                'upgrade' => "Upgraded from {$fromLevel} to {$toLevel}: {$points} remaining eligible earned points and {$journeys} journeys after points expiring by tomorrow.",
+                'downgrade' => "Downgraded from {$fromLevel} to {$toLevel}: {$points} remaining eligible earned points and {$journeys} journeys after points expiring by tomorrow.",
+                'maintained' => "Maintained {$toLevel}: {$points} remaining eligible earned points and {$journeys} journeys after points expiring by tomorrow.",
+                default => "Level set to {$toLevel}.",
+            };
+        }
 
         return match ($changeType) {
             'upgrade' => "Upgraded from {$fromLevel} to {$toLevel}: {$points} eligible earned points and {$journeys} journeys in the cycle.",

@@ -30,6 +30,10 @@ class GratitudeImportService
 
     private const REMOTE_IMPORT_CONCURRENCY = 15;
 
+    private const LEGACY_BALANCE_TRANSFER_DESCRIPTION = 'Balance transfer from old system';
+
+    private const LEGACY_BALANCE_TRANSFER_EXPIRES_AT = '2024-12-31';
+
     public function __construct(
         protected PointExpiryService $pointExpiryService,
         protected PointLedgerService $pointLedgerService,
@@ -586,7 +590,7 @@ class GratitudeImportService
                                 'category' => $ep['category'] ?? null,
                                 'status' => $this->normalizeImportedPointStatus($ep['status'] ?? null),
                                 'usable_date' => $usable_date,
-                                'expires_at' => $this->pointExpiryService->calculateEarnedExpiry($usable_date, $level),
+                                'expires_at' => $this->importedEarnedExpiry($ep, $usable_date, $level),
                                 'project_data' => $journeyToSave,
                                 'created_at' => ! empty($ep['created_at']) ? Carbon::parse($ep['created_at']) : null,
                                 'updated_at' => ! empty($ep['updated_at']) ? Carbon::parse($ep['updated_at']) : null,
@@ -1202,6 +1206,17 @@ class GratitudeImportService
         }
 
         return null;
+    }
+
+    private function importedEarnedExpiry(array $row, ?CarbonInterface $usableDate, ?GratitudeLevel $level): ?Carbon
+    {
+        $description = trim((string) ($row['description'] ?? ''));
+
+        if (strcasecmp($description, self::LEGACY_BALANCE_TRANSFER_DESCRIPTION) === 0) {
+            return Carbon::parse(self::LEGACY_BALANCE_TRANSFER_EXPIRES_AT);
+        }
+
+        return $this->pointExpiryService->calculateEarnedExpiry($usableDate, $level);
     }
 
     private function importNegativePointAdjustment(array $row, ?string $gratitudeNumber, string $source): void

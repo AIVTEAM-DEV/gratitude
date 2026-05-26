@@ -24,6 +24,7 @@ use App\Services\Gratitude\GratitudeAccountService;
 use App\Services\Gratitude\GratitudeService;
 use App\Services\Gratitude\TierService;
 use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -63,11 +64,11 @@ class GratitudeController extends Controller
 
     public function apiOverview()
     {
-        $totalAccounts = Gratitude::count();
-        $totalUsable = Gratitude::sum('useablePoints');
+        $totalAccounts = $this->activeGratitudeAccounts()->count();
+        $totalUsable = $this->activeGratitudeAccounts()->sum('useablePoints');
         $levelRedemptionRates = GratitudeLevel::query()
             ->pluck('redemption_points_per_dollar', 'name');
-        $totalUsableAmount = Gratitude::query()
+        $totalUsableAmount = $this->activeGratitudeAccounts()
             ->select('level', DB::raw('SUM(COALESCE(useablePoints, 0)) as usable_points'))
             ->groupBy('level')
             ->get()
@@ -79,19 +80,44 @@ class GratitudeController extends Controller
         $totalPending = EarnedPoint::activeStatus()
             ->whereNotNull('usable_date')
             ->where('usable_date', '>', Carbon::now())
+            ->whereExists(function ($query) {
+                $query->selectRaw('1')
+                    ->from('gratitudes')
+                    ->whereColumn('gratitudes.gratitudeNumber', 'earned_points.gratitudeNumber');
+
+                $this->applyActiveGratitudeAccountScope($query, 'gratitudes');
+            })
             ->sum('points');
         $totalReserved = GratitudeReserve::sum('amount');
         $totalUsedMoney = RedeemPoints::sum('amount') > 0 ? RedeemPoints::sum('amount') : RedeemPoints::sum('points'); // Approximating used money as amount or redeemed points
 
         return response()->json([
             'total_accounts' => $totalAccounts,
-            'total_point_balance' => Gratitude::sum('totalPoints'),
+            'total_point_balance' => $this->activeGratitudeAccounts()->sum('totalPoints'),
             'total_usable_points' => $totalUsable,
             'total_usable_amount' => round($totalUsableAmount, 2),
             'total_pending_points' => $totalPending,
             'total_reserved' => $totalReserved,
             'total_used_money' => $totalUsedMoney,
         ]);
+    }
+
+    private function activeGratitudeAccounts(): Builder
+    {
+        $query = Gratitude::query();
+        $this->applyActiveGratitudeAccountScope($query);
+
+        return $query;
+    }
+
+    private function applyActiveGratitudeAccountScope($query, string $table = 'gratitudes'): void
+    {
+        $query
+            ->where($table.'.is_active', true)
+            ->where(function ($q) use ($table) {
+                $q->whereNull($table.'.status')
+                    ->orWhereIn($table.'.status', ['active', '1', 1, true]);
+            });
     }
 
     public function apiReserve()
@@ -209,6 +235,9 @@ class GratitudeController extends Controller
         $availableBenefits = GratitudeBenefit::where('is_active', true)
             ->orderBy('name')
             ->get(['id', 'name', 'benefit_key', 'description', 'type']);
+        $pointsPerDollar = max(1, (float) ($level?->redemption_points_per_dollar ?: 35));
+        $partnerPointsPerDollar = max(1, (float) ($level?->partner_points_per_dollar ?: $pointsPerDollar));
+        $usablePoints = (int) ($gratitude->useablePoints ?? 0);
 
         $data = [
             'gratitude' => $gratitude,
@@ -227,9 +256,10 @@ class GratitudeController extends Controller
             'points_to_next_level' => $pointsToNextLevel,
             'rolling_tier_points' => $rollingTotalActive,
             'level_benefits' => $benefits,
-            'points_per_dollar' => $level ? (float) $level->redemption_points_per_dollar : 35,
-            'partner_points_per_dollar' => $level ? (float) ($level->partner_points_per_dollar ?: $level->redemption_points_per_dollar) : 35,
-            'redemption_points_per_dollar' => $level ? (float) $level->redemption_points_per_dollar : 35,
+            'points_per_dollar' => $pointsPerDollar,
+            'partner_points_per_dollar' => $partnerPointsPerDollar,
+            'redemption_points_per_dollar' => $pointsPerDollar,
+            'usable_points_dollar_value' => round($usablePoints / $pointsPerDollar, 2),
             'interval_start' => $intervalStart->toDateString(),
             'interval_end' => $intervalEnd->toDateString(),
             'interval_years' => $intervalYears,

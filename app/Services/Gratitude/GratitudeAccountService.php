@@ -26,13 +26,17 @@ class GratitudeAccountService
 
         return $accounts->map(function (Gratitude $gratitude) use ($levels) {
             $level = $levels->get($gratitude->level);
+            $useablePoints = (int) ($gratitude->useablePoints ?? 0);
+            $pointsPerDollar = max(1, (float) ($level?->redemption_points_per_dollar ?: 35));
             $expiringSoonPoints = (int) ($gratitude->earned_expiring_soon_points ?? 0)
                 + (int) ($gratitude->bonus_expiring_soon_points ?? 0);
 
             $gratitude->setAttribute('level_icon_url', $level?->level_icon_url);
             $gratitude->setAttribute('level_image_url', $level?->level_image_url);
-            $gratitude->setAttribute('redemption_points_per_dollar', (float) ($level?->redemption_points_per_dollar ?: 35));
+            $gratitude->setAttribute('redemption_points_per_dollar', $pointsPerDollar);
             $gratitude->setAttribute('total_balance', (int) ($gratitude->totalRemainingPoints ?? 0));
+            $gratitude->setAttribute('dollar_value', round($useablePoints / $pointsPerDollar, 2));
+            $gratitude->setAttribute('usable_points_dollar_value', round($useablePoints / $pointsPerDollar, 2));
             $gratitude->setAttribute('expiring_soon_points', $expiringSoonPoints);
 
             return $gratitude;

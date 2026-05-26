@@ -207,6 +207,14 @@ test('gratitude account total balance is the remaining points while pending poin
     try {
         $user = User::factory()->create();
 
+        GratitudeLevel::create([
+            'name' => 'Explorer',
+            'min_points' => 0,
+            'status' => true,
+            'redemption_points_per_dollar' => 25,
+            'partner_points_per_dollar' => 25,
+        ]);
+
         Gratitude::create([
             'gratitudeNumber' => 'G-PENDING-BALANCE',
             'level' => 'Explorer',
@@ -239,7 +247,10 @@ test('gratitude account total balance is the remaining points while pending poin
             ->assertJsonCount(1, 'points')
             ->assertJsonPath('points.0.total_balance', 350)
             ->assertJsonPath('points.0.useablePoints', 100)
-            ->assertJsonPath('points.0.pending_points', 250);
+            ->assertJsonPath('points.0.pending_points', 250)
+            ->assertJsonPath('points.0.redemption_points_per_dollar', 25)
+            ->assertJsonPath('points.0.dollar_value', 4)
+            ->assertJsonPath('points.0.usable_points_dollar_value', 4);
     } finally {
         Carbon::setTestNow();
     }
