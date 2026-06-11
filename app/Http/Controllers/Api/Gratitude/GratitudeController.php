@@ -20,6 +20,7 @@ use App\Models\Gratitude\RedeemPoints;
 use App\Services\Gratitude\BonusPointService;
 use App\Services\Gratitude\CancellationService;
 use App\Services\Gratitude\EarnedPointService;
+use App\Services\Gratitude\GratitudeAccountService;
 use App\Services\Gratitude\GratitudeService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -31,6 +32,7 @@ class GratitudeController extends Controller
         protected BonusPointService $bonusPointService,
         protected CancellationService $cancellationService,
         protected GratitudeService $gratitudeService,
+        protected GratitudeAccountService $gratitudeAccountService,
     ) {}
 
     public function index()
@@ -48,6 +50,18 @@ class GratitudeController extends Controller
                 ))
                 ->values()
         );
+    }
+
+    public function exportAccounts(Request $request, string $format)
+    {
+        $filters = $this->gratitudeAccountService->filters($request->query());
+
+        return match ($format) {
+            'pdf' => $this->gratitudeAccountService->pdfResponse($filters),
+            'excel' => $this->gratitudeAccountService->excelResponse($filters),
+            'print' => $this->gratitudeAccountService->printResponse($filters),
+            default => response()->json(['message' => 'Unsupported export format.'], 404),
+        };
     }
 
     public function store(Request $request)

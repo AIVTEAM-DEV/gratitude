@@ -11,6 +11,7 @@ import {
     Award,
     BadgeCheck,
     CircleDollarSign,
+    FileDown,
     Gift,
     History,
     KeyRound,
@@ -111,18 +112,36 @@ const metrics = computed(() => [
 ]);
 
 const json = (value: unknown) => JSON.stringify(value, null, 2);
+const noBody = 'No request body';
 
 const operations: Operation[] = [
+    {
+        name: 'List accounts',
+        method: 'GET',
+        path: '/api/v1/gratitude/all',
+        icon: BadgeCheck,
+        payload: noBody,
+        returns: json([
+            {
+                gratitudeNumber: 'G0880',
+                level: 'Explorer',
+                usable_points: 12500,
+                usable_points_dollar_value: 357.14,
+            },
+        ]),
+    },
     {
         name: 'Create account',
         method: 'POST',
         path: '/api/v1/gratitude',
         icon: UserPlus,
         payload: json({
-            old_id: 4821,
             category: [1],
-            level: 'Explorer',
-            status: 'active',
+            first_name: 'Ava',
+            last_name: 'Taylor',
+            email: 'ava@example.com',
+            client_id: 4821,
+            gratitude_number: 'G0042',
         }),
         returns: json({
             message: 'Gratitude account created',
@@ -132,7 +151,6 @@ const operations: Operation[] = [
                 useablePoints: 0,
             },
             prefix_used: 'G',
-            already_exists: false,
         }),
     },
     {
@@ -140,7 +158,7 @@ const operations: Operation[] = [
         method: 'GET',
         path: '/api/v1/gratitude/{number}',
         icon: BadgeCheck,
-        payload: 'No request body',
+        payload: noBody,
         returns: json({
             gratitude: {
                 gratitudeNumber: 'G0880',
@@ -150,6 +168,21 @@ const operations: Operation[] = [
             earned_points: [],
             bonus_points: [],
             redemptions: [],
+        }),
+    },
+    {
+        name: 'Export accounts',
+        method: 'GET',
+        path: '/api/v1/gratitude/accounts/export/{format}',
+        icon: FileDown,
+        payload:
+            'No request body. {format} must be pdf, excel, or print. Optional query filters: status, usable_points, expiry_status, expires_from, expires_to, usable_min, usable_max, level, search.',
+        returns: json({
+            pdf: 'application/pdf attachment',
+            excel: 'application/vnd.ms-excel attachment',
+            print: 'Printable HTML page',
+            example:
+                '/api/v1/gratitude/accounts/export/pdf?status=active&level=Explorer',
         }),
     },
     {
@@ -175,6 +208,38 @@ const operations: Operation[] = [
         }),
     },
     {
+        name: 'Update earned points',
+        method: 'PUT',
+        path: '/api/v1/gratitude/{number}/earned/{id}',
+        icon: Sparkles,
+        payload: json({
+            date: '2026-05-05',
+            category: 'journey',
+            points: 1500,
+            amount: 400,
+            description: 'Adjusted journey points',
+            journey_id: 12345,
+        }),
+        returns: json({
+            message: 'Points updated',
+            point: {
+                id: 101,
+                points: 1500,
+                description: 'Adjusted journey points',
+            },
+        }),
+    },
+    {
+        name: 'Delete earned points',
+        method: 'DELETE',
+        path: '/api/v1/gratitude/{number}/earned/{id}',
+        icon: MinusCircle,
+        payload: noBody,
+        returns: json({
+            message: 'Earned point deleted',
+        }),
+    },
+    {
         name: 'Record bonus points',
         method: 'POST',
         path: '/api/v1/gratitude/{number}/bonus',
@@ -190,6 +255,34 @@ const operations: Operation[] = [
                 id: 44,
                 points: 500,
             },
+        }),
+    },
+    {
+        name: 'Update bonus points',
+        method: 'PUT',
+        path: '/api/v1/gratitude/{number}/bonus/{id}',
+        icon: Gift,
+        payload: json({
+            date: '2026-05-05',
+            description: 'Updated service recovery bonus',
+            points: 750,
+        }),
+        returns: json({
+            message: 'Bonus points updated',
+            point: {
+                id: 44,
+                points: 750,
+            },
+        }),
+    },
+    {
+        name: 'Delete bonus points',
+        method: 'DELETE',
+        path: '/api/v1/gratitude/{number}/bonus/{id}',
+        icon: MinusCircle,
+        payload: noBody,
+        returns: json({
+            message: 'Bonus point deleted',
         }),
     },
     {
@@ -212,6 +305,33 @@ const operations: Operation[] = [
         }),
     },
     {
+        name: 'Update redemption',
+        method: 'PUT',
+        path: '/api/v1/gratitude/{number}/redeem/{id}',
+        icon: Landmark,
+        payload: json({
+            amount: 125,
+            reason: 'Adjusted partner purchase',
+        }),
+        returns: json({
+            message: 'Redemption updated',
+            redemption: {
+                points: 3500,
+                amount: '125.00',
+            },
+        }),
+    },
+    {
+        name: 'Delete redemption',
+        method: 'DELETE',
+        path: '/api/v1/gratitude/{number}/redeem/{id}',
+        icon: MinusCircle,
+        payload: noBody,
+        returns: json({
+            message: 'Redemption deleted',
+        }),
+    },
+    {
         name: 'Cancel points',
         method: 'POST',
         path: '/api/v1/gratitude/{number}/cancel',
@@ -231,11 +351,21 @@ const operations: Operation[] = [
         }),
     },
     {
+        name: 'Delete cancellation',
+        method: 'DELETE',
+        path: '/api/v1/gratitude/{number}/cancel/{id}',
+        icon: MinusCircle,
+        payload: noBody,
+        returns: json({
+            message: 'Cancellation deleted',
+        }),
+    },
+    {
         name: 'Check balance',
         method: 'GET',
         path: '/api/v1/gratitude/{number}/balance',
         icon: Activity,
-        payload: 'No request body',
+        payload: noBody,
         returns: json({
             gratitudeNumber: 'G0880',
             balance: {
@@ -250,7 +380,7 @@ const operations: Operation[] = [
         method: 'GET',
         path: '/api/v1/gratitude/{number}/level',
         icon: Trophy,
-        payload: 'No request body',
+        payload: noBody,
         returns: json({
             gratitudeNumber: 'G0880',
             level: {
@@ -268,7 +398,7 @@ const operations: Operation[] = [
         method: 'GET',
         path: '/api/v1/gratitude/levels/{level}/benefits',
         icon: Layers,
-        payload: 'No request body',
+        payload: noBody,
         returns: json({
             level: {
                 name: 'Globetrotter',
@@ -287,7 +417,7 @@ const operations: Operation[] = [
         method: 'GET',
         path: '/api/v1/gratitude/{number}/points-history',
         icon: History,
-        payload: 'No request body',
+        payload: noBody,
         returns: json({
             gratitudeNumber: 'G0880',
             history: [
@@ -343,7 +473,9 @@ const loadDashboard = async () => {
 
     try {
         const [overviewResponse, keysResponse] = await Promise.all([
-            axios.get<GratitudeOverviewSummary>('/internal-api/gratitude/overview'),
+            axios.get<GratitudeOverviewSummary>(
+                '/internal-api/gratitude/overview',
+            ),
             axios.get<ApplicationKey[]>('/internal-api/application-keys'),
         ]);
 
@@ -374,17 +506,24 @@ onMounted(loadDashboard);
 
     <AppLayout :breadcrumbs="breadcrumbs">
         <div class="space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-            <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div
+                class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"
+            >
                 <div>
-                    <div class="flex items-center gap-2 text-sm font-medium text-primary">
+                    <div
+                        class="flex items-center gap-2 text-sm font-medium text-primary"
+                    >
                         <Plug class="size-4" />
                         Standalone gratitude service
                     </div>
-                    <h1 class="mt-2 text-3xl font-bold tracking-tight text-foreground">
+                    <h1
+                        class="mt-2 text-3xl font-bold tracking-tight text-foreground"
+                    >
                         Gratitude Operations
                     </h1>
                     <p class="mt-2 max-w-3xl text-sm text-muted-foreground">
-                        Central account, point, redemption, cancellation, balance, and level service for connected applications.
+                        Central account, point, redemption, cancellation,
+                        balance, and level service for connected applications.
                     </p>
                 </div>
 
@@ -412,10 +551,14 @@ onMounted(loadDashboard);
                 >
                     <div class="flex items-start justify-between gap-4">
                         <div>
-                            <p class="text-sm font-medium text-muted-foreground">
+                            <p
+                                class="text-sm font-medium text-muted-foreground"
+                            >
                                 {{ metric.label }}
                             </p>
-                            <p class="mt-2 text-3xl font-bold tracking-tight text-foreground">
+                            <p
+                                class="mt-2 text-3xl font-bold tracking-tight text-foreground"
+                            >
                                 {{ loading ? '...' : metric.value }}
                             </p>
                             <p class="mt-1 text-xs text-muted-foreground">
@@ -429,7 +572,9 @@ onMounted(loadDashboard);
                 </div>
             </div>
 
-            <div class="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
+            <div
+                class="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]"
+            >
                 <div class="rounded-lg border border-border bg-card shadow-sm">
                     <div class="border-b border-border px-5 py-4">
                         <div class="flex items-center gap-2">
@@ -443,22 +588,35 @@ onMounted(loadDashboard);
                     <div class="grid gap-4 p-4 lg:grid-cols-2">
                         <div
                             v-for="operation in operations"
-                            :key="operation.path"
+                            :key="`${operation.method}:${operation.path}`"
                             class="min-w-0 rounded-md border border-border bg-background p-4"
                         >
                             <div class="flex items-start gap-3">
-                                <div class="rounded-md bg-muted p-2 text-muted-foreground">
-                                    <component :is="operation.icon" class="size-4" />
+                                <div
+                                    class="rounded-md bg-muted p-2 text-muted-foreground"
+                                >
+                                    <component
+                                        :is="operation.icon"
+                                        class="size-4"
+                                    />
                                 </div>
                                 <div class="min-w-0 flex-1">
-                                    <p class="text-sm font-semibold text-foreground">
+                                    <p
+                                        class="text-sm font-semibold text-foreground"
+                                    >
                                         {{ operation.name }}
                                     </p>
-                                    <div class="mt-1 flex min-w-0 items-center gap-2 text-xs">
-                                        <span class="rounded border border-border px-1.5 py-0.5 font-mono font-semibold text-primary">
+                                    <div
+                                        class="mt-1 flex min-w-0 items-center gap-2 text-xs"
+                                    >
+                                        <span
+                                            class="rounded border border-border px-1.5 py-0.5 font-mono font-semibold text-primary"
+                                        >
                                             {{ operation.method }}
                                         </span>
-                                        <span class="truncate font-mono text-muted-foreground">
+                                        <span
+                                            class="min-w-0 font-mono break-all text-muted-foreground"
+                                        >
                                             {{ operation.path }}
                                         </span>
                                     </div>
@@ -467,16 +625,26 @@ onMounted(loadDashboard);
 
                             <div class="mt-4 grid gap-3">
                                 <div>
-                                    <p class="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+                                    <p
+                                        class="mb-1 text-xs font-semibold text-muted-foreground uppercase"
+                                    >
                                         Payload
                                     </p>
-                                    <pre class="max-h-44 overflow-auto rounded-md bg-muted/70 p-3 text-xs leading-relaxed text-foreground">{{ operation.payload }}</pre>
+                                    <pre
+                                        class="max-h-64 overflow-auto rounded-md bg-muted/70 p-3 text-xs leading-relaxed break-words whitespace-pre-wrap text-foreground"
+                                        >{{ operation.payload }}</pre
+                                    >
                                 </div>
                                 <div>
-                                    <p class="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+                                    <p
+                                        class="mb-1 text-xs font-semibold text-muted-foreground uppercase"
+                                    >
                                         Returns
                                     </p>
-                                    <pre class="max-h-44 overflow-auto rounded-md bg-muted/70 p-3 text-xs leading-relaxed text-foreground">{{ operation.returns }}</pre>
+                                    <pre
+                                        class="max-h-64 overflow-auto rounded-md bg-muted/70 p-3 text-xs leading-relaxed break-words whitespace-pre-wrap text-foreground"
+                                        >{{ operation.returns }}</pre
+                                    >
                                 </div>
                             </div>
                         </div>
@@ -488,7 +656,9 @@ onMounted(loadDashboard);
                         <div class="flex items-center justify-between gap-3">
                             <div class="flex items-center gap-2">
                                 <KeyRound class="size-5 text-primary" />
-                                <h2 class="text-base font-semibold text-foreground">
+                                <h2
+                                    class="text-base font-semibold text-foreground"
+                                >
                                     Connected Applications
                                 </h2>
                             </div>
@@ -499,7 +669,10 @@ onMounted(loadDashboard);
                                 aria-label="Refresh dashboard"
                                 @click="loadDashboard"
                             >
-                                <RefreshCw class="size-4" :class="{ 'animate-spin': loading }" />
+                                <RefreshCw
+                                    class="size-4"
+                                    :class="{ 'animate-spin': loading }"
+                                />
                             </Button>
                         </div>
                     </div>
@@ -511,10 +684,14 @@ onMounted(loadDashboard);
                             class="flex items-center justify-between gap-4 px-5 py-4"
                         >
                             <div class="min-w-0">
-                                <p class="truncate text-sm font-semibold text-foreground">
+                                <p
+                                    class="truncate text-sm font-semibold text-foreground"
+                                >
                                     {{ application.name }}
                                 </p>
-                                <p class="truncate text-xs text-muted-foreground">
+                                <p
+                                    class="truncate text-xs text-muted-foreground"
+                                >
                                     {{ application.url || 'No URL recorded' }}
                                 </p>
                             </div>
@@ -541,15 +718,23 @@ onMounted(loadDashboard);
                     <div class="border-t border-border px-5 py-4">
                         <div class="grid grid-cols-2 gap-3 text-sm">
                             <div class="rounded-md bg-muted/50 p-3">
-                                <p class="text-xs font-medium text-muted-foreground">
+                                <p
+                                    class="text-xs font-medium text-muted-foreground"
+                                >
                                     Total points
                                 </p>
                                 <p class="mt-1 font-semibold text-foreground">
-                                    {{ formatNumber(summary.total_point_balance) }}
+                                    {{
+                                        formatNumber(
+                                            summary.total_point_balance,
+                                        )
+                                    }}
                                 </p>
                             </div>
                             <div class="rounded-md bg-muted/50 p-3">
-                                <p class="text-xs font-medium text-muted-foreground">
+                                <p
+                                    class="text-xs font-medium text-muted-foreground"
+                                >
                                     Redeemed value
                                 </p>
                                 <p class="mt-1 font-semibold text-foreground">
