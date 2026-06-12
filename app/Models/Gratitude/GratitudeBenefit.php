@@ -4,8 +4,8 @@ namespace App\Models\Gratitude;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Spatie\Activitylog\Traits\LogsActivity;
 use Spatie\Activitylog\LogOptions;
+use Spatie\Activitylog\Traits\LogsActivity;
 
 class GratitudeBenefit extends Model
 {
@@ -24,11 +24,15 @@ class GratitudeBenefit extends Model
         'is_active',
     ];
 
+    protected $casts = [
+        'is_active' => 'boolean',
+    ];
+
     public function levels()
     {
         return $this->belongsToMany(GratitudeLevel::class, 'benefit_gratitude_level')
-                    ->using(BenefitGratitudeLevel::class)
-                    ->withPivot('description', 'value', 'value_type', 'calculation', 'is_active', 'web_status')
-                    ->withTimestamps();
+            ->using(BenefitGratitudeLevel::class)
+            ->withPivot('description', 'value', 'value_type', 'calculation', 'is_active', 'web_status')
+            ->withTimestamps();
     }
 }

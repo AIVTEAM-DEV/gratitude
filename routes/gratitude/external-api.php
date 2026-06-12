@@ -9,7 +9,13 @@ Route::prefix('gratitude')->name('gratitude.')->group(function () {
     Route::get('accounts/export/{format}', [GratitudeController::class, 'exportAccounts'])
         ->whereIn('format', ['pdf', 'excel', 'print'])
         ->name('accounts.export');
+    Route::get('levels', [GratitudeController::class, 'levels'])->name('levels.index');
+    Route::post('levels', [GratitudeController::class, 'storeLevel'])->name('levels.store');
+    Route::put('levels/{level}', [GratitudeController::class, 'updateLevel'])->name('levels.update');
     Route::get('levels/{level}/benefits', [GratitudeController::class, 'benefitsByLevel'])->name('levels.benefits');
+    Route::get('benefits', [GratitudeController::class, 'benefits'])->name('benefits.index');
+    Route::post('benefits', [GratitudeController::class, 'storeBenefit'])->name('benefits.store');
+    Route::put('benefits/{benefit}', [GratitudeController::class, 'updateBenefit'])->name('benefits.update');
     Route::get('{gratitudeNumber}/balance', [GratitudeController::class, 'balance'])->name('balance');
     Route::get('{gratitudeNumber}/level', [GratitudeController::class, 'level'])->name('level');
     Route::get('{gratitudeNumber}/points-history', [GratitudeController::class, 'pointsHistory'])->name('points-history');

@@ -282,6 +282,119 @@ class GratitudeServiceTest extends TestCase
             ->assertJsonPath('benefits.0.value', 'Included');
     }
 
+    public function test_external_api_can_get_and_manage_levels()
+    {
+        $this->withoutMiddleware(ValidateBearerToken::class);
+
+        $indexResponse = $this->getJson('/api/v1/gratitude/levels');
+
+        $indexResponse
+            ->assertOk()
+            ->assertJsonPath('0.name', 'Explorer');
+
+        $createResponse = $this->postJson('/api/v1/gratitude/levels', [
+            'name' => 'Voyager',
+            'min_points' => 45000,
+            'max_points' => 60000,
+            'status' => true,
+            'redemption_points_per_dollar' => 20,
+            'partner_points_per_dollar' => 25,
+            'level_rules' => [
+                [
+                    'name' => 'minimum_stays',
+                    'value' => '3',
+                    'status' => true,
+                    'value_type' => 'number',
+                ],
+            ],
+        ]);
+
+        $createResponse
+            ->assertCreated()
+            ->assertJsonPath('message', 'Gratitude Level created successfully.')
+            ->assertJsonPath('level.name', 'Voyager')
+            ->assertJsonPath('level.level_rules.0.name', 'minimum_stays');
+
+        $levelId = $createResponse->json('level.id');
+
+        $updateResponse = $this->putJson("/api/v1/gratitude/levels/{$levelId}", [
+            'max_points' => 70000,
+            'status' => false,
+        ]);
+
+        $updateResponse
+            ->assertOk()
+            ->assertJsonPath('level.max_points', 70000)
+            ->assertJsonPath('level.status', false);
+
+        $this->assertDatabaseHas('gratitude_levels', [
+            'id' => $levelId,
+            'name' => 'Voyager',
+            'max_points' => 70000,
+            'status' => false,
+        ]);
+    }
+
+    public function test_external_api_can_get_and_manage_benefits()
+    {
+        $this->withoutMiddleware(ValidateBearerToken::class);
+
+        $level = GratitudeLevel::where('name', 'Explorer')->firstOrFail();
+        GratitudeBenefit::create([
+            'name' => 'Late Checkout',
+            'benefit_key' => 'late_checkout',
+            'description' => 'Late checkout benefit',
+            'type' => 'journey',
+            'is_active' => true,
+        ]);
+
+        $indexResponse = $this->getJson('/api/v1/gratitude/benefits');
+
+        $indexResponse
+            ->assertOk()
+            ->assertJsonPath('0.benefit_key', 'late_checkout');
+
+        $createResponse = $this->postJson('/api/v1/gratitude/benefits', [
+            'name' => 'Priority Support',
+            'benefit_key' => 'priority_support',
+            'description' => 'Priority help desk support',
+            'type' => 'service',
+            'is_active' => true,
+            'level_mappings' => [
+                $level->id => [
+                    'enabled' => true,
+                    'value' => 'Included',
+                    'description' => 'Explorer priority support',
+                    'value_type' => 'text',
+                    'is_active' => true,
+                    'web_status' => true,
+                ],
+            ],
+        ]);
+
+        $createResponse
+            ->assertCreated()
+            ->assertJsonPath('message', 'Benefit created successfully.')
+            ->assertJsonPath('benefit.benefit_key', 'priority_support')
+            ->assertJsonPath('benefit.levels.0.pivot.value', 'Included');
+
+        $updateResponse = $this->putJson('/api/v1/gratitude/benefits/priority_support', [
+            'description' => 'Updated priority help desk support',
+            'is_active' => false,
+        ]);
+
+        $updateResponse
+            ->assertOk()
+            ->assertJsonPath('benefit.description', 'Updated priority help desk support')
+            ->assertJsonPath('benefit.is_active', false);
+
+        $this->assertDatabaseHas('gratitude_benefits', [
+            'benefit_key' => 'priority_support',
+            'description' => 'Updated priority help desk support',
+            'is_active' => false,
+        ]);
+    }
+
     public function test_external_api_can_get_points_history()
     {
         $this->withoutMiddleware(ValidateBearerToken::class);

@@ -24,6 +24,9 @@ use App\Services\Gratitude\GratitudeAccountService;
 use App\Services\Gratitude\GratitudeService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class GratitudeController extends Controller
 {
@@ -37,18 +40,8 @@ class GratitudeController extends Controller
 
     public function index()
     {
-        $gratitudes = $this->gratitudeService->allGratitudes();
-        $levels = GratitudeLevel::whereIn('name', $gratitudes->pluck('level')->filter()->unique())
-            ->get()
-            ->keyBy('name');
-
         return response()->json(
-            $gratitudes
-                ->map(fn (Gratitude $gratitude) => $this->formatGratitudeForExternal(
-                    $gratitude,
-                    $levels->get($gratitude->level)
-                ))
-                ->values()
+            $this->gratitudeAccountService->accounts()->values()
         );
     }
 
@@ -62,6 +55,84 @@ class GratitudeController extends Controller
             'print' => $this->gratitudeAccountService->printResponse($filters),
             default => response()->json(['message' => 'Unsupported export format.'], 404),
         };
+    }
+
+    public function levels()
+    {
+        return response()->json(
+            GratitudeLevel::with(['benefits' => fn ($query) => $query->orderBy('name')])
+                ->orderBy('min_points')
+                ->get()
+        );
+    }
+
+    public function storeLevel(Request $request)
+    {
+        $validated = $request->validate($this->levelValidationRules());
+        $this->validateLevelPointRange($validated);
+
+        $level = GratitudeLevel::create($this->levelDataFromRequest($request, $validated));
+
+        return response()->json([
+            'message' => 'Gratitude Level created successfully.',
+            'level' => $level->fresh('benefits'),
+        ], 201);
+    }
+
+    public function updateLevel(Request $request, string $level)
+    {
+        $levelModel = $this->findLevel($level);
+        $validated = $request->validate($this->levelValidationRules(true));
+        $this->validateLevelPointRange($validated, $levelModel);
+
+        $levelModel->update($this->levelDataFromRequest($request, $validated, $levelModel));
+
+        return response()->json([
+            'message' => 'Gratitude Level updated successfully.',
+            'level' => $levelModel->fresh('benefits'),
+        ]);
+    }
+
+    public function benefits()
+    {
+        return response()->json(
+            GratitudeBenefit::with(['levels' => fn ($query) => $query->orderBy('min_points')])
+                ->orderBy('name')
+                ->get()
+        );
+    }
+
+    public function storeBenefit(Request $request)
+    {
+        $validated = $request->validate($this->benefitValidationRules());
+
+        $benefit = GratitudeBenefit::create($this->benefitDataFromRequest($request, $validated));
+
+        if ($request->exists('level_mappings')) {
+            $this->syncBenefitLevelMappings($benefit, $request->input('level_mappings') ?? []);
+        }
+
+        return response()->json([
+            'message' => 'Benefit created successfully.',
+            'benefit' => $benefit->fresh('levels'),
+        ], 201);
+    }
+
+    public function updateBenefit(Request $request, string $benefit)
+    {
+        $benefitModel = $this->findBenefit($benefit);
+        $validated = $request->validate($this->benefitValidationRules($benefitModel, true));
+
+        $benefitModel->update($this->benefitDataFromRequest($request, $validated, $benefitModel));
+
+        if ($request->exists('level_mappings')) {
+            $this->syncBenefitLevelMappings($benefitModel, $request->input('level_mappings') ?? []);
+        }
+
+        return response()->json([
+            'message' => 'Benefit updated successfully.',
+            'benefit' => $benefitModel->fresh('levels'),
+        ]);
     }
 
     public function store(Request $request)
@@ -169,7 +240,7 @@ class GratitudeController extends Controller
 
     public function benefitsByLevel(string $level)
     {
-        $levelModel = GratitudeLevel::where('name', $level)->firstOrFail();
+        $levelModel = $this->findLevel($level);
 
         $benefits = $levelModel->benefits()
             ->where('gratitude_benefits.is_active', true)
@@ -377,6 +448,249 @@ class GratitudeController extends Controller
         }
 
         return response()->json(['message' => 'Redemption deleted']);
+    }
+
+    private function levelValidationRules(bool $updating = false): array
+    {
+        $required = $updating ? 'sometimes' : 'required';
+        $optional = $updating ? 'sometimes' : 'nullable';
+
+        return [
+            'name' => [$required, 'string', 'max:255'],
+            'min_points' => [$required, 'numeric', 'min:0'],
+            'max_points' => [$optional, 'nullable', 'numeric'],
+            'status' => [$optional, 'nullable'],
+            'redemption_points_per_dollar' => [$optional, 'nullable', 'numeric', 'min:1'],
+            'partner_points_per_dollar' => [$optional, 'nullable', 'numeric', 'min:1'],
+            'earned_expire_days' => [$optional, 'nullable', 'integer', 'min:1'],
+            'bonus_expire_days' => [$optional, 'nullable', 'integer', 'min:1'],
+            'level_interval_years' => [$optional, 'nullable', 'integer', 'min:1'],
+            'min_journeys' => [$optional, 'nullable', 'integer', 'min:0'],
+            'jetsetter_min_journeys' => [$optional, 'nullable', 'integer', 'min:0'],
+            'jetsetter_min_journey_days' => [$optional, 'nullable', 'integer', 'min:0'],
+            'stay_active_rules' => [$optional, 'nullable', 'string'],
+            'level_rules' => [$optional, 'nullable'],
+            'terms_conditions' => [$optional, 'nullable', 'string'],
+            'level_terms_conditions' => [$optional, 'nullable', 'string'],
+            'level_image' => [$optional, 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,gif,svg', 'max:4096'],
+            'level_icon' => [$optional, 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,gif,svg', 'max:4096'],
+        ];
+    }
+
+    private function levelDataFromRequest(Request $request, array $validated, ?GratitudeLevel $level = null): array
+    {
+        $data = [];
+        $nullableFields = [
+            'name',
+            'min_points',
+            'max_points',
+            'jetsetter_min_journeys',
+            'jetsetter_min_journey_days',
+            'stay_active_rules',
+            'terms_conditions',
+            'level_terms_conditions',
+        ];
+        $defaultedFields = [
+            'redemption_points_per_dollar' => 35,
+            'earned_expire_days' => 730,
+            'bonus_expire_days' => 730,
+            'level_interval_years' => 2,
+            'min_journeys' => 0,
+        ];
+
+        foreach ($nullableFields as $field) {
+            if (array_key_exists($field, $validated)) {
+                $data[$field] = $validated[$field];
+            }
+        }
+
+        foreach ($defaultedFields as $field => $default) {
+            if (array_key_exists($field, $validated) && $validated[$field] !== null) {
+                $data[$field] = $validated[$field];
+            } elseif (! $level) {
+                $data[$field] = $default;
+            }
+        }
+
+        if (array_key_exists('partner_points_per_dollar', $validated) && $validated['partner_points_per_dollar'] !== null) {
+            $data['partner_points_per_dollar'] = $validated['partner_points_per_dollar'];
+        } elseif (! $level) {
+            $data['partner_points_per_dollar'] = $data['redemption_points_per_dollar'];
+        }
+
+        if ($request->exists('status')) {
+            $data['status'] = $this->booleanFromValue($request->input('status'), $level?->status ?? true);
+        } elseif (! $level) {
+            $data['status'] = true;
+        }
+
+        if ($request->exists('level_rules')) {
+            $data['level_rules'] = $this->normalizeJsonPayload($request->input('level_rules'), 'level_rules');
+        }
+
+        foreach (['level_image', 'level_icon'] as $fileField) {
+            if (! $request->hasFile($fileField)) {
+                continue;
+            }
+
+            if ($level?->{$fileField}) {
+                Storage::disk('public')->delete($level->{$fileField});
+            }
+
+            $data[$fileField] = $request->file($fileField)->store('gratitude-levels', 'public');
+        }
+
+        return $data;
+    }
+
+    private function validateLevelPointRange(array $validated, ?GratitudeLevel $level = null): void
+    {
+        $minPoints = array_key_exists('min_points', $validated)
+            ? (float) $validated['min_points']
+            : (float) ($level?->min_points ?? 0);
+        $maxPoints = array_key_exists('max_points', $validated)
+            ? $validated['max_points']
+            : $level?->max_points;
+
+        if ($maxPoints !== null && (float) $maxPoints < $minPoints) {
+            throw ValidationException::withMessages([
+                'max_points' => ['The max points must be greater than or equal to min points.'],
+            ]);
+        }
+    }
+
+    private function benefitValidationRules(?GratitudeBenefit $benefit = null, bool $updating = false): array
+    {
+        $required = $updating ? 'sometimes' : 'required';
+        $optional = $updating ? 'sometimes' : 'nullable';
+        $uniqueBenefitKey = Rule::unique('gratitude_benefits', 'benefit_key');
+
+        if ($benefit) {
+            $uniqueBenefitKey->ignore($benefit->id);
+        }
+
+        return [
+            'name' => [$required, 'string', 'max:255'],
+            'benefit_key' => [$optional, 'nullable', 'string', 'max:100', $uniqueBenefitKey],
+            'description' => [$optional, 'nullable', 'string'],
+            'type' => [$optional, 'nullable', 'string', 'max:50'],
+            'is_active' => [$optional, 'nullable'],
+            'level_mappings' => [$optional, 'nullable', 'array'],
+            'level_mappings.*.level_id' => ['nullable', 'integer', 'exists:gratitude_levels,id'],
+            'level_mappings.*.enabled' => ['nullable'],
+            'level_mappings.*.value' => ['nullable', 'string'],
+            'level_mappings.*.description' => ['nullable', 'string'],
+            'level_mappings.*.value_type' => ['nullable', 'string'],
+            'level_mappings.*.calculation' => ['nullable'],
+            'level_mappings.*.is_active' => ['nullable'],
+            'level_mappings.*.web_status' => ['nullable'],
+        ];
+    }
+
+    private function benefitDataFromRequest(Request $request, array $validated, ?GratitudeBenefit $benefit = null): array
+    {
+        $data = [];
+
+        foreach (['name', 'benefit_key', 'description', 'type'] as $field) {
+            if (array_key_exists($field, $validated)) {
+                $data[$field] = $validated[$field];
+            }
+        }
+
+        if (! $benefit && ! array_key_exists('type', $data)) {
+            $data['type'] = 'base';
+        }
+
+        if ($request->exists('is_active')) {
+            $data['is_active'] = $this->booleanFromValue($request->input('is_active'), $benefit?->is_active ?? true);
+        } elseif (! $benefit) {
+            $data['is_active'] = true;
+        }
+
+        return $data;
+    }
+
+    private function syncBenefitLevelMappings(GratitudeBenefit $benefit, array $levelMappings): void
+    {
+        $syncData = [];
+
+        foreach ($levelMappings as $key => $mapping) {
+            if (! is_array($mapping)) {
+                continue;
+            }
+
+            $levelId = $mapping['level_id'] ?? (is_numeric($key) ? (int) $key : null);
+
+            if (! $levelId || ! GratitudeLevel::whereKey($levelId)->exists()) {
+                throw ValidationException::withMessages([
+                    "level_mappings.$key.level_id" => ['The selected gratitude level is invalid.'],
+                ]);
+            }
+
+            if (! $this->booleanFromValue($mapping['enabled'] ?? true, true)) {
+                continue;
+            }
+
+            $isActive = $this->booleanFromValue($mapping['is_active'] ?? true, true);
+            $calculation = $this->normalizeJsonPayload($mapping['calculation'] ?? null, "level_mappings.$key.calculation");
+
+            $syncData[(int) $levelId] = [
+                'value' => $mapping['value'] ?? null,
+                'description' => $mapping['description'] ?? null,
+                'value_type' => $mapping['value_type'] ?? 'fixed',
+                'calculation' => $calculation !== null ? json_encode($calculation) : null,
+                'is_active' => $isActive,
+                'web_status' => $isActive ? $this->booleanFromValue($mapping['web_status'] ?? true, true) : false,
+            ];
+        }
+
+        $benefit->levels()->sync($syncData);
+    }
+
+    private function findLevel(string $level): GratitudeLevel
+    {
+        return is_numeric($level)
+            ? GratitudeLevel::findOrFail((int) $level)
+            : GratitudeLevel::where('name', $level)->firstOrFail();
+    }
+
+    private function findBenefit(string $benefit): GratitudeBenefit
+    {
+        return is_numeric($benefit)
+            ? GratitudeBenefit::findOrFail((int) $benefit)
+            : GratitudeBenefit::where('benefit_key', $benefit)->firstOrFail();
+    }
+
+    private function normalizeJsonPayload(mixed $value, string $field): ?array
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (is_array($value)) {
+            return $value;
+        }
+
+        if (is_string($value)) {
+            $decoded = json_decode($value, true);
+
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                return $decoded;
+            }
+        }
+
+        throw ValidationException::withMessages([
+            $field => ['The '.$field.' field must be valid JSON.'],
+        ]);
+    }
+
+    private function booleanFromValue(mixed $value, bool $default): bool
+    {
+        if ($value === null || $value === '') {
+            return $default;
+        }
+
+        return filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) ?? $default;
     }
 
     private function buildPointsHistory($earnedPoints, $bonusPoints, $cancellations, $redemptions)
