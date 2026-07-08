@@ -299,6 +299,8 @@ class GratitudeServiceTest extends TestCase
             'status' => true,
             'redemption_points_per_dollar' => 20,
             'partner_points_per_dollar' => 25,
+            'gift_card_points_per_dollar' => 22,
+            'airline_miles_points_per_dollar' => 24,
             'level_rules' => [
                 [
                     'name' => 'minimum_stays',
@@ -313,6 +315,8 @@ class GratitudeServiceTest extends TestCase
             ->assertCreated()
             ->assertJsonPath('message', 'Gratitude Level created successfully.')
             ->assertJsonPath('level.name', 'Voyager')
+            ->assertJsonPath('level.gift_card_points_per_dollar', '22.00')
+            ->assertJsonPath('level.airline_miles_points_per_dollar', '24.00')
             ->assertJsonPath('level.level_rules.0.name', 'minimum_stays');
 
         $levelId = $createResponse->json('level.id');
@@ -332,6 +336,8 @@ class GratitudeServiceTest extends TestCase
             'name' => 'Voyager',
             'max_points' => 70000,
             'status' => false,
+            'gift_card_points_per_dollar' => 22,
+            'airline_miles_points_per_dollar' => 24,
         ]);
     }
 
@@ -928,6 +934,43 @@ class GratitudeServiceTest extends TestCase
         $this->assertEquals('partner', $redemption->category);
         $this->assertEquals('1.00', (string) $redemption->amount);
         $this->assertEquals(50, $redemption->points_breakdown['points_per_dollar']);
+    }
+
+    public function test_gift_card_and_airline_miles_redemptions_use_configured_rates()
+    {
+        GratitudeLevel::where('name', 'Explorer')->update([
+            'redemption_points_per_dollar' => 35,
+            'partner_points_per_dollar' => 50,
+            'gift_card_points_per_dollar' => 20,
+            'airline_miles_points_per_dollar' => 25,
+        ]);
+
+        BonusPoint::create([
+            'gratitudeNumber' => $this->gratitudeNumber,
+            'date' => Carbon::today(),
+            'points' => 200,
+            'status' => true,
+            'description' => 'Flexible redemption balance',
+            'expires_at' => Carbon::today()->addYear(),
+        ]);
+
+        $giftCardRedemption = $this->gratitudeService->redeemPoints($this->gratitudeNumber, [
+            'reason' => 'Gift card purchase',
+            'redemption_type' => 'gift_card',
+        ], 40);
+
+        $airlineMilesRedemption = $this->gratitudeService->redeemPoints($this->gratitudeNumber, [
+            'reason' => 'Airline miles transfer',
+            'redemption_type' => 'airline_miles',
+        ], 75);
+
+        $this->assertEquals('gift_card', $giftCardRedemption->category);
+        $this->assertEquals('2.00', (string) $giftCardRedemption->amount);
+        $this->assertEquals(20, $giftCardRedemption->points_breakdown['points_per_dollar']);
+
+        $this->assertEquals('airline_miles', $airlineMilesRedemption->category);
+        $this->assertEquals('3.00', (string) $airlineMilesRedemption->amount);
+        $this->assertEquals(25, $airlineMilesRedemption->points_breakdown['points_per_dollar']);
     }
 
     public function test_redeem_points_consumes_soonest_expiring_points_first()

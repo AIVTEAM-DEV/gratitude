@@ -17,7 +17,7 @@ class StoreRedemptionRequest extends FormRequest
             'points' => 'required|numeric|min:1',
             'amount' => 'nullable|numeric',
             'reason' => 'nullable|string',
-            'redemption_type' => 'nullable|string|in:journey,partner,other',
+            'redemption_type' => 'nullable|string|in:journey,partner,gift_card,gift_cards,airline_mile,airline_miles,other',
             'journey_id' => 'nullable|integer|required_if:redemption_type,journey',
             'journey_data' => 'nullable|array',
         ];

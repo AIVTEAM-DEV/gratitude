@@ -181,7 +181,12 @@ class GratitudeController extends Controller
             $data['cancellations'],
             $data['redemptions']
         );
-        $data['points_per_dollar'] = $this->redemptionPointsPerDollar($level);
+        $pointsPerDollar = $this->redemptionPointsPerDollar($level);
+        $data['points_per_dollar'] = $pointsPerDollar;
+        $data['redemption_points_per_dollar'] = $pointsPerDollar;
+        $data['partner_points_per_dollar'] = $this->partnerPointsPerDollar($level, $pointsPerDollar);
+        $data['gift_card_points_per_dollar'] = $this->giftCardPointsPerDollar($level, $pointsPerDollar);
+        $data['airline_miles_points_per_dollar'] = $this->airlineMilesPointsPerDollar($level, $pointsPerDollar);
 
         return response()->json($data);
     }
@@ -232,6 +237,8 @@ class GratitudeController extends Controller
                 'max_points' => $level->max_points !== null ? (int) $level->max_points : null,
                 'redemption_points_per_dollar' => (float) $level->redemption_points_per_dollar,
                 'partner_points_per_dollar' => (float) ($level->partner_points_per_dollar ?: $level->redemption_points_per_dollar),
+                'gift_card_points_per_dollar' => (float) ($level->gift_card_points_per_dollar ?: $level->redemption_points_per_dollar),
+                'airline_miles_points_per_dollar' => (float) ($level->airline_miles_points_per_dollar ?: $level->redemption_points_per_dollar),
                 'earned_expire_days' => (int) $level->earned_expire_days,
                 'bonus_expire_days' => (int) $level->bonus_expire_days,
             ] : null,
@@ -462,6 +469,8 @@ class GratitudeController extends Controller
             'status' => [$optional, 'nullable'],
             'redemption_points_per_dollar' => [$optional, 'nullable', 'numeric', 'min:1'],
             'partner_points_per_dollar' => [$optional, 'nullable', 'numeric', 'min:1'],
+            'gift_card_points_per_dollar' => [$optional, 'nullable', 'numeric', 'min:1'],
+            'airline_miles_points_per_dollar' => [$optional, 'nullable', 'numeric', 'min:1'],
             'earned_expire_days' => [$optional, 'nullable', 'integer', 'min:1'],
             'bonus_expire_days' => [$optional, 'nullable', 'integer', 'min:1'],
             'level_interval_years' => [$optional, 'nullable', 'integer', 'min:1'],
@@ -516,6 +525,18 @@ class GratitudeController extends Controller
             $data['partner_points_per_dollar'] = $validated['partner_points_per_dollar'];
         } elseif (! $level) {
             $data['partner_points_per_dollar'] = $data['redemption_points_per_dollar'];
+        }
+
+        if (array_key_exists('gift_card_points_per_dollar', $validated) && $validated['gift_card_points_per_dollar'] !== null) {
+            $data['gift_card_points_per_dollar'] = $validated['gift_card_points_per_dollar'];
+        } elseif (! $level) {
+            $data['gift_card_points_per_dollar'] = $data['redemption_points_per_dollar'];
+        }
+
+        if (array_key_exists('airline_miles_points_per_dollar', $validated) && $validated['airline_miles_points_per_dollar'] !== null) {
+            $data['airline_miles_points_per_dollar'] = $validated['airline_miles_points_per_dollar'];
+        } elseif (! $level) {
+            $data['airline_miles_points_per_dollar'] = $data['redemption_points_per_dollar'];
         }
 
         if ($request->exists('status')) {
@@ -779,6 +800,9 @@ class GratitudeController extends Controller
         $data['usable_points'] = $usablePoints;
         $data['points_per_dollar'] = $pointsPerDollar;
         $data['redemption_points_per_dollar'] = $pointsPerDollar;
+        $data['partner_points_per_dollar'] = $this->partnerPointsPerDollar($level, $pointsPerDollar);
+        $data['gift_card_points_per_dollar'] = $this->giftCardPointsPerDollar($level, $pointsPerDollar);
+        $data['airline_miles_points_per_dollar'] = $this->airlineMilesPointsPerDollar($level, $pointsPerDollar);
         $data['usable_points_dollar_value'] = $this->dollarValueForPoints($usablePoints, $pointsPerDollar);
 
         return $data;
@@ -787,6 +811,21 @@ class GratitudeController extends Controller
     private function redemptionPointsPerDollar(?GratitudeLevel $level): float
     {
         return max(1, (float) ($level?->redemption_points_per_dollar ?: 35));
+    }
+
+    private function partnerPointsPerDollar(?GratitudeLevel $level, float $fallback): float
+    {
+        return max(1, (float) ($level?->partner_points_per_dollar ?: $fallback));
+    }
+
+    private function giftCardPointsPerDollar(?GratitudeLevel $level, float $fallback): float
+    {
+        return max(1, (float) ($level?->gift_card_points_per_dollar ?: $fallback));
+    }
+
+    private function airlineMilesPointsPerDollar(?GratitudeLevel $level, float $fallback): float
+    {
+        return max(1, (float) ($level?->airline_miles_points_per_dollar ?: $fallback));
     }
 
     private function dollarValueForPoints(int $points, float $pointsPerDollar): float

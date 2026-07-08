@@ -114,7 +114,8 @@ const mediaUrl = (url?: string | null, path?: string | null) => {
                             >Journey Points Per Dollar</span
                         >
                         <div class="mt-1 text-base font-medium">
-                            {{ level.redemption_points_per_dollar || 35 }} pts = $1
+                            {{ level.redemption_points_per_dollar || 35 }} pts =
+                            $1
                         </div>
                     </div>
                     <div>
@@ -123,7 +124,40 @@ const mediaUrl = (url?: string | null, path?: string | null) => {
                             >Partner Points Per Dollar</span
                         >
                         <div class="mt-1 text-base font-medium">
-                            {{ level.partner_points_per_dollar || level.redemption_points_per_dollar || 35 }} pts = $1
+                            {{
+                                level.partner_points_per_dollar ||
+                                level.redemption_points_per_dollar ||
+                                35
+                            }}
+                            pts = $1
+                        </div>
+                    </div>
+                    <div>
+                        <span
+                            class="text-xs font-semibold text-muted-foreground uppercase"
+                            >Gift Card Points Per Dollar</span
+                        >
+                        <div class="mt-1 text-base font-medium">
+                            {{
+                                level.gift_card_points_per_dollar ||
+                                level.redemption_points_per_dollar ||
+                                35
+                            }}
+                            pts = $1
+                        </div>
+                    </div>
+                    <div>
+                        <span
+                            class="text-xs font-semibold text-muted-foreground uppercase"
+                            >Airline Miles Points Per Dollar</span
+                        >
+                        <div class="mt-1 text-base font-medium">
+                            {{
+                                level.airline_miles_points_per_dollar ||
+                                level.redemption_points_per_dollar ||
+                                35
+                            }}
+                            pts = $1
                         </div>
                     </div>
                     <div>
@@ -152,9 +186,22 @@ const mediaUrl = (url?: string | null, path?: string | null) => {
                             class="mb-2 block text-xs font-semibold text-muted-foreground uppercase"
                             >Level Image</span
                         >
-                        <div v-if="mediaUrl(level.level_image_url, level.level_image)" class="mt-1">
+                        <div
+                            v-if="
+                                mediaUrl(
+                                    level.level_image_url,
+                                    level.level_image,
+                                )
+                            "
+                            class="mt-1"
+                        >
                             <img
-                                :src="mediaUrl(level.level_image_url, level.level_image)"
+                                :src="
+                                    mediaUrl(
+                                        level.level_image_url,
+                                        level.level_image,
+                                    )
+                                "
                                 alt="Level Image"
                                 class="h-20 w-auto rounded border border-border"
                             />
@@ -168,9 +215,19 @@ const mediaUrl = (url?: string | null, path?: string | null) => {
                             class="mb-2 block text-xs font-semibold text-muted-foreground uppercase"
                             >Level Icon</span
                         >
-                        <div v-if="mediaUrl(level.level_icon_url, level.level_icon)" class="mt-1">
+                        <div
+                            v-if="
+                                mediaUrl(level.level_icon_url, level.level_icon)
+                            "
+                            class="mt-1"
+                        >
                             <img
-                                :src="mediaUrl(level.level_icon_url, level.level_icon)"
+                                :src="
+                                    mediaUrl(
+                                        level.level_icon_url,
+                                        level.level_icon,
+                                    )
+                                "
                                 alt="Level Icon"
                                 class="h-10 w-10 rounded border border-border object-contain"
                             />
@@ -191,25 +248,49 @@ const mediaUrl = (url?: string | null, path?: string | null) => {
                         class="mb-3 grid grid-cols-12 items-center gap-4 rounded-md border border-border bg-muted/10 p-4"
                     >
                         <div class="col-span-4">
-                            <span class="text-xs font-semibold text-muted-foreground uppercase">Rule Name</span>
-                            <div class="mt-1 text-sm font-medium break-words font-mono">{{ rule.name }}</div>
+                            <span
+                                class="text-xs font-semibold text-muted-foreground uppercase"
+                                >Rule Name</span
+                            >
+                            <div
+                                class="mt-1 font-mono text-sm font-medium break-words"
+                            >
+                                {{ rule.name }}
+                            </div>
                         </div>
                         <div class="col-span-4">
-                            <span class="text-xs font-semibold text-muted-foreground uppercase">Value</span>
+                            <span
+                                class="text-xs font-semibold text-muted-foreground uppercase"
+                                >Value</span
+                            >
                             <div class="mt-1 text-sm font-medium break-words">
-                                <span v-if="rule.value_type === 'boolean'"
-                                    :class="String(rule.value) === 'true'
-                                        ? 'inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800'
-                                        : 'inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-800'">
-                                    {{ String(rule.value) === 'true' ? 'True' : 'False' }}
+                                <span
+                                    v-if="rule.value_type === 'boolean'"
+                                    :class="
+                                        String(rule.value) === 'true'
+                                            ? 'inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800'
+                                            : 'inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-800'
+                                    "
+                                >
+                                    {{
+                                        String(rule.value) === 'true'
+                                            ? 'True'
+                                            : 'False'
+                                    }}
                                 </span>
                                 <span v-else>{{ rule.value }}</span>
                             </div>
                         </div>
                         <div class="col-span-3">
-                            <span class="text-xs font-semibold text-muted-foreground uppercase">Type</span>
+                            <span
+                                class="text-xs font-semibold text-muted-foreground uppercase"
+                                >Type</span
+                            >
                             <div class="mt-1">
-                                <span class="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium capitalize">{{ rule.value_type }}</span>
+                                <span
+                                    class="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium capitalize"
+                                    >{{ rule.value_type }}</span
+                                >
                             </div>
                         </div>
                         <div class="col-span-1 text-right">

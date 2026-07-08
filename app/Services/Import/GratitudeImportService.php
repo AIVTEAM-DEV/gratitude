@@ -1700,11 +1700,14 @@ class GratitudeImportService
 
     private function pointsPerDollarForRedemption(?GratitudeLevel $level, ?string $redemptionType): float
     {
-        $type = strtolower((string) ($redemptionType ?: 'journey'));
+        $type = str_replace(['-', ' '], '_', strtolower((string) ($redemptionType ?: 'journey')));
 
-        $rate = $type === 'partner'
-            ? ($level?->partner_points_per_dollar ?: $level?->redemption_points_per_dollar)
-            : $level?->redemption_points_per_dollar;
+        $rate = match ($type) {
+            'partner' => $level?->partner_points_per_dollar ?: $level?->redemption_points_per_dollar,
+            'gift_card', 'gift_cards' => $level?->gift_card_points_per_dollar ?: $level?->redemption_points_per_dollar,
+            'airline_mile', 'airline_miles' => $level?->airline_miles_points_per_dollar ?: $level?->redemption_points_per_dollar,
+            default => $level?->redemption_points_per_dollar,
+        };
 
         return max(1, (float) ($rate ?: 35));
     }

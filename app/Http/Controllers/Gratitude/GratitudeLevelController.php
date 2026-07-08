@@ -35,6 +35,8 @@ class GratitudeLevelController extends Controller
             'max_points' => 'nullable|numeric|gte:min_points',
             'redemption_points_per_dollar' => 'nullable|numeric|min:1',
             'partner_points_per_dollar' => 'nullable|numeric|min:1',
+            'gift_card_points_per_dollar' => 'nullable|numeric|min:1',
+            'airline_miles_points_per_dollar' => 'nullable|numeric|min:1',
             'earned_expire_days' => 'nullable|integer|min:1',
             'bonus_expire_days' => 'nullable|integer|min:1',
             'level_interval_years' => 'nullable|integer|min:1',
@@ -48,6 +50,8 @@ class GratitudeLevelController extends Controller
         $data['status'] = filter_var($request->input('status', true), FILTER_VALIDATE_BOOLEAN);
         $data['redemption_points_per_dollar'] = $request->input('redemption_points_per_dollar', 35);
         $data['partner_points_per_dollar'] = $request->input('partner_points_per_dollar', $data['redemption_points_per_dollar']);
+        $data['gift_card_points_per_dollar'] = $request->input('gift_card_points_per_dollar', $data['redemption_points_per_dollar']);
+        $data['airline_miles_points_per_dollar'] = $request->input('airline_miles_points_per_dollar', $data['redemption_points_per_dollar']);
         $data['earned_expire_days'] = (int) $request->input('earned_expire_days', 730);
         $data['bonus_expire_days'] = (int) $request->input('bonus_expire_days', 730);
         $data['level_interval_years'] = (int) $request->input('level_interval_years', 2);
@@ -78,6 +82,8 @@ class GratitudeLevelController extends Controller
             'max_points' => 'nullable|numeric|gte:min_points',
             'redemption_points_per_dollar' => 'nullable|numeric|min:1',
             'partner_points_per_dollar' => 'nullable|numeric|min:1',
+            'gift_card_points_per_dollar' => 'nullable|numeric|min:1',
+            'airline_miles_points_per_dollar' => 'nullable|numeric|min:1',
             'earned_expire_days' => 'nullable|integer|min:1',
             'bonus_expire_days' => 'nullable|integer|min:1',
             'level_interval_years' => 'nullable|integer|min:1',
@@ -95,6 +101,12 @@ class GratitudeLevelController extends Controller
         }
         if ($request->filled('partner_points_per_dollar')) {
             $data['partner_points_per_dollar'] = $request->input('partner_points_per_dollar');
+        }
+        if ($request->filled('gift_card_points_per_dollar')) {
+            $data['gift_card_points_per_dollar'] = $request->input('gift_card_points_per_dollar');
+        }
+        if ($request->filled('airline_miles_points_per_dollar')) {
+            $data['airline_miles_points_per_dollar'] = $request->input('airline_miles_points_per_dollar');
         }
         $data['earned_expire_days'] = (int) $request->input('earned_expire_days', $level->earned_expire_days ?: 730);
         $data['bonus_expire_days'] = (int) $request->input('bonus_expire_days', $level->bonus_expire_days ?: 730);

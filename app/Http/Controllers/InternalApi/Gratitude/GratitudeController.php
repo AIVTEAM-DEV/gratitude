@@ -237,6 +237,8 @@ class GratitudeController extends Controller
             ->get(['id', 'name', 'benefit_key', 'description', 'type']);
         $pointsPerDollar = max(1, (float) ($level?->redemption_points_per_dollar ?: 35));
         $partnerPointsPerDollar = max(1, (float) ($level?->partner_points_per_dollar ?: $pointsPerDollar));
+        $giftCardPointsPerDollar = max(1, (float) ($level?->gift_card_points_per_dollar ?: $pointsPerDollar));
+        $airlineMilesPointsPerDollar = max(1, (float) ($level?->airline_miles_points_per_dollar ?: $pointsPerDollar));
         $usablePoints = (int) ($gratitude->useablePoints ?? 0);
 
         $data = [
@@ -258,6 +260,8 @@ class GratitudeController extends Controller
             'level_benefits' => $benefits,
             'points_per_dollar' => $pointsPerDollar,
             'partner_points_per_dollar' => $partnerPointsPerDollar,
+            'gift_card_points_per_dollar' => $giftCardPointsPerDollar,
+            'airline_miles_points_per_dollar' => $airlineMilesPointsPerDollar,
             'redemption_points_per_dollar' => $pointsPerDollar,
             'usable_points_dollar_value' => round($usablePoints / $pointsPerDollar, 2),
             'interval_start' => $intervalStart->toDateString(),
@@ -399,7 +403,7 @@ class GratitudeController extends Controller
             'amount' => 'nullable|numeric',
             'date' => 'nullable|date',
             'reason' => 'nullable|string',
-            'redemption_type' => 'nullable|string|in:journey,partner,other',
+            'redemption_type' => 'nullable|string|in:journey,partner,gift_card,gift_cards,airline_mile,airline_miles,other',
             'journey_id' => 'nullable|integer|required_if:redemption_type,journey',
             'journey_data' => 'nullable|array',
         ]);

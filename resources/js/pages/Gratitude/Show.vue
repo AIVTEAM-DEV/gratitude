@@ -1,27 +1,6 @@
 <script setup lang="ts">
 import { Head, Link } from '@inertiajs/vue3';
-import AppLayout from '@/layouts/AppLayout.vue';
-import { BreadcrumbItem } from '@/types';
-import { ref, computed, onMounted } from 'vue';
 import axios from 'axios';
-import AddEarnedPoints from '@/components/Gratitude/AddEarnedPoints.vue';
-import AddBonusPoints from '@/components/Gratitude/AddBonusPoints.vue';
-import UpdateAccountStatus from '@/components/Gratitude/UpdateAccountStatus.vue';
-import UpdateEarnedPoints from '@/components/Gratitude/UpdateEarnedPoints.vue';
-import UpdateBonusPoints from '@/components/Gratitude/UpdateBonusPoints.vue';
-import CancelPointEntry from '@/components/Gratitude/CancelPointEntry.vue';
-import DeletePointEntry from '@/components/Gratitude/DeletePointEntry.vue';
-import DeleteCancellation from '@/components/Gratitude/DeleteCancellation.vue';
-import AddRedemption from '@/components/Gratitude/AddRedemption.vue';
-import DeleteRedemption from '@/components/Gratitude/DeleteRedemption.vue';
-import UpdateRedemption from '@/components/Gratitude/UpdateRedemption.vue';
-import ViewEntryDetails from '@/components/Gratitude/ViewEntryDetails.vue';
-import ViewRedemptionDetails from '@/components/Gratitude/ViewRedemptionDetails.vue';
-import AddEarnedBenefit from '@/components/Gratitude/AddEarnedBenefit.vue';
-import UpdateEarnedBenefit from '@/components/Gratitude/UpdateEarnedBenefit.vue';
-import DeleteEarnedBenefit from '@/components/Gratitude/DeleteEarnedBenefit.vue';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 import {
     ArrowLeft,
     Award,
@@ -40,6 +19,27 @@ import {
     TrendingUp,
     Zap,
 } from 'lucide-vue-next';
+import { ref, computed, onMounted } from 'vue';
+import AddBonusPoints from '@/components/Gratitude/AddBonusPoints.vue';
+import AddEarnedBenefit from '@/components/Gratitude/AddEarnedBenefit.vue';
+import AddEarnedPoints from '@/components/Gratitude/AddEarnedPoints.vue';
+import AddRedemption from '@/components/Gratitude/AddRedemption.vue';
+import CancelPointEntry from '@/components/Gratitude/CancelPointEntry.vue';
+import DeleteCancellation from '@/components/Gratitude/DeleteCancellation.vue';
+import DeleteEarnedBenefit from '@/components/Gratitude/DeleteEarnedBenefit.vue';
+import DeletePointEntry from '@/components/Gratitude/DeletePointEntry.vue';
+import DeleteRedemption from '@/components/Gratitude/DeleteRedemption.vue';
+import UpdateAccountStatus from '@/components/Gratitude/UpdateAccountStatus.vue';
+import UpdateBonusPoints from '@/components/Gratitude/UpdateBonusPoints.vue';
+import UpdateEarnedBenefit from '@/components/Gratitude/UpdateEarnedBenefit.vue';
+import UpdateEarnedPoints from '@/components/Gratitude/UpdateEarnedPoints.vue';
+import UpdateRedemption from '@/components/Gratitude/UpdateRedemption.vue';
+import ViewEntryDetails from '@/components/Gratitude/ViewEntryDetails.vue';
+import ViewRedemptionDetails from '@/components/Gratitude/ViewRedemptionDetails.vue';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import AppLayout from '@/layouts/AppLayout.vue';
+import type { BreadcrumbItem } from '@/types';
 
 const props = defineProps({
     gratitudeNumber: {
@@ -74,6 +74,8 @@ const data = ref<any>({
     level_benefits: [],
     points_per_dollar: 35,
     partner_points_per_dollar: 35,
+    gift_card_points_per_dollar: 35,
+    airline_miles_points_per_dollar: 35,
     usable_points_dollar_value: 0,
     points_history: [],
     interval_start: null,
@@ -240,6 +242,27 @@ const redemptionDetailDate = (detail: any) =>
             detail?.created_at,
         '',
     );
+const redemptionRate = (redemption: any) =>
+    Math.max(
+        1,
+        Number(
+            redemption?.points_breakdown?.points_per_dollar ||
+                data.value.redemption_points_per_dollar ||
+                data.value.points_per_dollar ||
+                35,
+        ),
+    );
+const redemptionValue = (redemption: any) => {
+    const amount = Number(redemption?.amount || 0);
+
+    if (amount > 0) {
+        return amount.toFixed(2);
+    }
+
+    return (
+        Number(redemption?.points || 0) / redemptionRate(redemption)
+    ).toFixed(2);
+};
 const guestOwnership = (guest: any) =>
     String(
         guest?.ownership ||
@@ -284,9 +307,9 @@ const secondaryGuests = computed(() =>
 const combinedTierPoints = computed(() => {
     const now = new Date();
     const earned = data.value.earned_points.map((p: any) => {
-        let isCancelled = p.cancel_id && p.cancellation;
-        let hasCancellation = isCancelled || pointCancelled(p) > 0;
-        let isExpired =
+        const isCancelled = p.cancel_id && p.cancellation;
+        const hasCancellation = isCancelled || pointCancelled(p) > 0;
+        const isExpired =
             !isCancelled && !!p.expires_at && new Date(p.expires_at) <= now;
         return {
             ...p,
@@ -343,9 +366,9 @@ const combinedBonusPoints = computed(() => {
     const now = new Date();
     return data.value.bonus_points
         .map((p: any) => {
-            let isCancelled = p.cancel_id && p.cancellation;
-            let hasCancellation = isCancelled || pointCancelled(p) > 0;
-            let isExpired =
+            const isCancelled = p.cancel_id && p.cancellation;
+            const hasCancellation = isCancelled || pointCancelled(p) > 0;
+            const isExpired =
                 !isCancelled && !!p.expires_at && new Date(p.expires_at) <= now;
             return {
                 ...p,
@@ -2940,24 +2963,50 @@ const exportPointsHistoryPdf = () => openPointsHistoryPrintWindow();
                                 >
                                     Redeemed Points
                                 </h2>
-                                <p class="mt-0.5 text-xs text-muted-foreground">
-                                    Journey:
-                                    <strong
-                                        >{{
-                                            data.redemption_points_per_dollar ||
-                                            data.points_per_dollar
-                                        }}
-                                        pts = $1</strong
-                                    >
-                                    · Partner:
-                                    <strong
-                                        >{{
-                                            data.partner_points_per_dollar ||
-                                            data.points_per_dollar
-                                        }}
-                                        pts = $1</strong
-                                    >
-                                </p>
+                                <div
+                                    class="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground"
+                                >
+                                    <span>
+                                        Journey:
+                                        <strong
+                                            >{{
+                                                data.redemption_points_per_dollar ||
+                                                data.points_per_dollar
+                                            }}
+                                            pts = $1</strong
+                                        >
+                                    </span>
+                                    <span>
+                                        Partner:
+                                        <strong
+                                            >{{
+                                                data.partner_points_per_dollar ||
+                                                data.points_per_dollar
+                                            }}
+                                            pts = $1</strong
+                                        >
+                                    </span>
+                                    <span>
+                                        Gift Card:
+                                        <strong
+                                            >{{
+                                                data.gift_card_points_per_dollar ||
+                                                data.points_per_dollar
+                                            }}
+                                            pts = $1</strong
+                                        >
+                                    </span>
+                                    <span>
+                                        Airline Miles:
+                                        <strong
+                                            >{{
+                                                data.airline_miles_points_per_dollar ||
+                                                data.points_per_dollar
+                                            }}
+                                            pts = $1</strong
+                                        >
+                                    </span>
+                                </div>
                             </div>
                         </div>
                         <div class="flex items-center gap-3">
@@ -2971,6 +3020,14 @@ const exportPointsHistoryPdf = () => openPointsHistoryPrintWindow();
                                     "
                                     :partnerPointsPerDollar="
                                         data.partner_points_per_dollar ||
+                                        data.points_per_dollar
+                                    "
+                                    :giftCardPointsPerDollar="
+                                        data.gift_card_points_per_dollar ||
+                                        data.points_per_dollar
+                                    "
+                                    :airlineMilesPointsPerDollar="
+                                        data.airline_miles_points_per_dollar ||
                                         data.points_per_dollar
                                     "
                                     :level="data.gratitude?.level || 'Explorer'"
@@ -3048,16 +3105,7 @@ const exportPointsHistoryPdf = () => openPointsHistoryPrintWindow();
                                         <td
                                             class="px-6 py-4 text-sm font-bold whitespace-nowrap text-green-600 dark:text-green-400"
                                         >
-                                            ${{
-                                                redemption.amount > 0
-                                                    ? Number(
-                                                          redemption.amount,
-                                                      ).toFixed(2)
-                                                    : (
-                                                          redemption.points /
-                                                          data.points_per_dollar
-                                                      ).toFixed(2)
-                                            }}
+                                            ${{ redemptionValue(redemption) }}
                                         </td>
                                         <td
                                             class="px-6 py-4 text-right text-sm whitespace-nowrap"

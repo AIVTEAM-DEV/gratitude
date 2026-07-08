@@ -1,16 +1,18 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
 import axios from 'axios';
+import { History, DollarSign } from 'lucide-vue-next';
+import { ref, computed, watch } from 'vue';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { History, DollarSign } from 'lucide-vue-next';
 
 const props = defineProps({
     gratitudeNumber: { type: String, required: true },
     usablePoints: { type: Number, default: 0 },
     pointsPerDollar: { type: Number, default: 35 },
     partnerPointsPerDollar: { type: Number, default: 35 },
+    giftCardPointsPerDollar: { type: Number, default: 35 },
+    airlineMilesPointsPerDollar: { type: Number, default: 35 },
     level: { type: String, default: 'Explorer' },
     journeys: { type: Array, default: () => [] },
 });
@@ -29,10 +31,28 @@ const form = ref({
     reason: 'Partner Redemption',
 });
 
+const defaultRedemptionReasons: Record<string, string> = {
+    partner: 'Partner Redemption',
+    journey: 'Journey Redemption',
+    gift_card: 'Gift Card Redemption',
+    airline_miles: 'Airline Miles Redemption',
+    other: 'Other Redemption',
+};
+
 const selectedRate = computed(() => {
-    return form.value.redemption_type === 'partner'
-        ? props.partnerPointsPerDollar
-        : props.pointsPerDollar;
+    if (form.value.redemption_type === 'partner') {
+        return props.partnerPointsPerDollar;
+    }
+
+    if (form.value.redemption_type === 'gift_card') {
+        return props.giftCardPointsPerDollar;
+    }
+
+    if (form.value.redemption_type === 'airline_miles') {
+        return props.airlineMilesPointsPerDollar;
+    }
+
+    return props.pointsPerDollar;
 });
 const journeyOptions = computed(() => props.journeys as any[]);
 const selectedJourney = computed(() =>
@@ -69,6 +89,20 @@ const canSubmit = computed(
 const setMaxPoints = () => {
     form.value.points = maxRedeemable.value;
 };
+
+watch(
+    () => form.value.redemption_type,
+    (type, previousType) => {
+        const previousDefault = previousType
+            ? defaultRedemptionReasons[previousType]
+            : '';
+
+        if (!form.value.reason || form.value.reason === previousDefault) {
+            form.value.reason =
+                defaultRedemptionReasons[type] ?? 'Point Redemption';
+        }
+    },
+);
 
 const submit = async () => {
     if (!canSubmit.value) return;
@@ -200,6 +234,8 @@ const submit = async () => {
                         >
                             <option value="partner">Partner Purchase</option>
                             <option value="journey">Journey</option>
+                            <option value="gift_card">Gift Card</option>
+                            <option value="airline_miles">Airline Miles</option>
                             <option value="other">Other</option>
                         </select>
                     </div>
