@@ -374,6 +374,7 @@ class GratitudeController extends Controller
     // Redemptions
     public function storeRedemption(StoreRedemptionRequest $request, string $gratitudeNumber)
     {
+       
         $result = $this->gratitudeService->redeemPoints($gratitudeNumber, $request->validated(), $request->points);
         if (is_array($result) && isset($result['error'])) {
             return response()->json(['message' => $result['error']], 422);
