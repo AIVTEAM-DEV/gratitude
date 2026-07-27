@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
 import axios from 'axios';
+import { computed, ref } from 'vue';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -102,10 +102,9 @@ const submit = async () => {
                     </div>
 
                     <!-- Journey -->
-                    <div class="space-y-1.5">
+                    <div v-if="isJourneyEntry" class="space-y-1.5">
                         <Label class="text-xs font-semibold text-foreground/80">Journey</Label>
                         <select
-                            v-if="isJourneyEntry"
                             v-model="form.journey_id"
                             class="w-full flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
                             required
@@ -115,7 +114,6 @@ const submit = async () => {
                                 {{ journey.guest_name ? `${journey.guest_name} - ` : '' }}{{ journey.label || `Journey #${journey.journey_id || journey.id}` }}
                             </option>
                         </select>
-                        <Input v-else type="number" v-model="form.journey_id" class="h-10" placeholder="Optional Journey ID" />
                     </div>
 
                     <!-- Category -->

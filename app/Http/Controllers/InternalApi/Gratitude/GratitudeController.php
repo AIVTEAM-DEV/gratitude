@@ -17,6 +17,7 @@ use App\Models\Gratitude\GratitudeEarnedBenefit;
 use App\Models\Gratitude\GratitudeLevel;
 use App\Models\Gratitude\GratitudeReserve;
 use App\Models\Gratitude\RedeemPoints;
+use App\Services\Gratitude\AivteamJourneyService;
 use App\Services\Gratitude\BonusPointService;
 use App\Services\Gratitude\CancellationService;
 use App\Services\Gratitude\EarnedPointService;
@@ -33,6 +34,7 @@ class GratitudeController extends Controller
     public function __construct(
         protected GratitudeService $gratitudeService,
         protected GratitudeAccountService $gratitudeAccountService,
+        protected AivteamJourneyService $aivteamJourneyService,
         protected EarnedPointService $earnedPointService,
         protected BonusPointService $bonusPointService,
         protected CancellationService $cancellationService,
@@ -188,6 +190,7 @@ class GratitudeController extends Controller
         $cancellations = Cancellation::where('gratitudeNumber', $gratitudeNumber)->get();
         $redemptions = RedeemPoints::with('details')->where('gratitudeNumber', $gratitudeNumber)->get();
         $journeys = $this->buildAccountJourneys($guests, $earnedPoints, $bonusPoints, $redemptions);
+        $earnedJourneys = $this->aivteamJourneyService->all() ?? $journeys;
 
         $this->attachCancellationHistory($earnedPoints, $bonusPoints, $cancellations);
 
@@ -245,6 +248,7 @@ class GratitudeController extends Controller
             'gratitude' => $gratitude,
             'guests' => $guests,
             'journeys' => $journeys,
+            'earned_journeys' => $earnedJourneys,
             'levels' => $allLevels->values(),
             'level_info' => $level,
             'earned_points' => $earnedPoints,

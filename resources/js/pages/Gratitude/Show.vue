@@ -63,6 +63,7 @@ const data = ref<any>({
     gratitude: null,
     guests: [],
     journeys: [],
+    earned_journeys: [],
     levels: [],
     earned_points: [],
     bonus_points: [],
@@ -1955,7 +1956,7 @@ const exportPointsHistoryPdf = () => openPointsHistoryPrintWindow();
                                 <AddEarnedPoints
                                     :gratitudeNumber="gratitudeNumber"
                                     :expireDays="earnedExpireDays"
-                                    :journeys="data.journeys"
+                                    :journeys="data.earned_journeys"
                                     @saved="fetchDetails"
                                 />
                             </div>
@@ -2359,6 +2360,9 @@ const exportPointsHistoryPdf = () => openPointsHistoryPrintWindow();
                                                             :point="item"
                                                             :expireDays="
                                                                 earnedExpireDays
+                                                            "
+                                                            :journeys="
+                                                                data.earned_journeys
                                                             "
                                                             @saved="
                                                                 fetchDetails
