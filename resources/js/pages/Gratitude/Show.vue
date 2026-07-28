@@ -1195,7 +1195,9 @@ const exportPointsHistoryPdf = () => openPointsHistoryPrintWindow();
                                                 class="inline-flex items-center rounded-full border border-primary/20 bg-primary/10 px-2.5 py-0.5 text-xs font-semibold text-primary"
                                             >
                                                 {{
-                                                    benefit.value || 'Included'
+                                                    benefit.formatted_value ||
+                                                    benefit.value ||
+                                                    'Included'
                                                 }}
                                             </span>
                                         </td>

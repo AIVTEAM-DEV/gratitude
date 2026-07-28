@@ -11,7 +11,7 @@ const form = ref({
     name: '',
     benefit_key: '',
     description: '',
-    type: 'fixed',
+    type: 'text',
     is_active: true,
 });
 
@@ -19,7 +19,7 @@ const submit = async () => {
     try {
         await axios.post('/internal-api/gratitude/benefits', form.value);
         isOpen.value = false;
-        form.value = { name: '', benefit_key: '', description: '', type: 'fixed', is_active: true };
+        form.value = { name: '', benefit_key: '', description: '', type: 'text', is_active: true };
         emit('saved');
     } catch (error) {
         console.error('Error saving benefit', error);
@@ -53,12 +53,14 @@ const openModal = () => {
                         <Input v-model="form.description" />
                     </div>
                     <div>
-                        <Label>Type</Label>
+                        <Label>Default Rule</Label>
                         <select v-model="form.type" class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
-                            <option value="fixed">Fixed</option>
-                            <option value="percentage">Percentage</option>
-                            <option value="multiplier">Multiplier</option>
-                            <option value="custom">Custom</option>
+                            <option value="text">Text / Included</option>
+                            <option value="per_person">Amount per person</option>
+                            <option value="per_room">Amount per room</option>
+                            <option value="miles">Miles</option>
+                            <option value="points_per_dollar">Points per dollar</option>
+                            <option value="referral_points">Referral points</option>
                         </select>
                     </div>
                     <div class="flex items-center space-x-2">

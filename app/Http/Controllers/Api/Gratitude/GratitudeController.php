@@ -21,6 +21,7 @@ use App\Services\Gratitude\BonusPointService;
 use App\Services\Gratitude\CancellationService;
 use App\Services\Gratitude\EarnedPointService;
 use App\Services\Gratitude\GratitudeAccountService;
+use App\Services\Gratitude\GratitudeBenefitsService;
 use App\Services\Gratitude\GratitudeService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -36,6 +37,7 @@ class GratitudeController extends Controller
         protected CancellationService $cancellationService,
         protected GratitudeService $gratitudeService,
         protected GratitudeAccountService $gratitudeAccountService,
+        protected GratitudeBenefitsService $gratitudeBenefitsService,
     ) {}
 
     public function index()
@@ -252,18 +254,27 @@ class GratitudeController extends Controller
         $benefits = $levelModel->benefits()
             ->where('gratitude_benefits.is_active', true)
             ->wherePivot('is_active', true)
+            ->wherePivot('web_status', true)
             ->get()
-            ->map(fn ($benefit) => [
-                'id' => $benefit->id,
-                'name' => $benefit->name,
-                'benefit_key' => $benefit->benefit_key,
-                'type' => $benefit->type,
-                'description' => $benefit->pivot->description ?: $benefit->description,
-                'value' => $benefit->pivot->value,
-                'value_type' => $benefit->pivot->value_type,
-                'calculation' => $benefit->pivot->calculation,
-                'web_status' => (bool) $benefit->pivot->web_status,
-            ])
+            ->map(function ($benefit) {
+                $rule = $this->gratitudeBenefitsService->levelBenefitRule($benefit, $benefit->pivot);
+
+                return [
+                    'id' => $benefit->id,
+                    'name' => $benefit->name,
+                    'benefit_key' => $benefit->benefit_key,
+                    'type' => $benefit->type,
+                    'description' => $benefit->pivot->description ?: $benefit->description,
+                    'value' => $benefit->pivot->value,
+                    'rule_value' => $rule['value'],
+                    'formatted_value' => $rule['formatted_value'],
+                    'value_type' => $benefit->pivot->value_type,
+                    'rule_key' => $rule['key'],
+                    'currency' => $rule['currency'],
+                    'calculation' => $rule['calculation'],
+                    'web_status' => (bool) $benefit->pivot->web_status,
+                ];
+            })
             ->values();
 
         return response()->json([
@@ -374,7 +385,7 @@ class GratitudeController extends Controller
     // Redemptions
     public function storeRedemption(StoreRedemptionRequest $request, string $gratitudeNumber)
     {
-       
+
         $result = $this->gratitudeService->redeemPoints($gratitudeNumber, $request->validated(), $request->points);
         if (is_array($result) && isset($result['error'])) {
             return response()->json(['message' => $result['error']], 422);
@@ -405,7 +416,7 @@ class GratitudeController extends Controller
             'journey_id' => 'nullable|integer',
             'benefit_name' => 'required_without:benefit_id|string|max:255|nullable',
             'benefit_key' => 'nullable|string|max:255',
-            'description' => 'required|string',
+            'description' => 'required_without:benefit_id|nullable|string',
             'benefit_value' => 'nullable|string|max:255',
             'value_type' => 'nullable|string|max:255',
             'project_data' => 'nullable|array',
@@ -414,13 +425,29 @@ class GratitudeController extends Controller
             'notes' => 'nullable|string',
         ]);
 
-        // Auto-resolve benefit_name / benefit_key from the linked benefit when omitted
         if (! empty($validated['benefit_id'])) {
-            $benefit = GratitudeBenefit::find($validated['benefit_id']);
-            if ($benefit) {
-                $validated['benefit_name'] = $validated['benefit_name'] ?? $benefit->name;
-                $validated['benefit_key'] = $validated['benefit_key'] ?? $benefit->benefit_key;
+            $level = GratitudeLevel::where('name', $gratitude->level)->first();
+            $benefit = $level?->benefits()
+                ->whereKey($validated['benefit_id'])
+                ->where('gratitude_benefits.is_active', true)
+                ->wherePivot('is_active', true)
+                ->first();
+
+            if (! $benefit) {
+                throw ValidationException::withMessages([
+                    'benefit_id' => ['The selected benefit is not active for this member’s gratitude level.'],
+                ]);
             }
+
+            $rule = $this->gratitudeBenefitsService->levelBenefitRule($benefit, $benefit->pivot);
+            $validated['benefit_name'] = $benefit->name;
+            $validated['benefit_key'] = $benefit->benefit_key;
+            $validated['description'] = $validated['description']
+                ?? $benefit->pivot->description
+                ?? $benefit->description
+                ?? $benefit->name;
+            $validated['benefit_value'] = $validated['benefit_value'] ?? $rule['formatted_value'];
+            $validated['value_type'] = $validated['value_type'] ?? $rule['key'];
         }
 
         $entry = GratitudeEarnedBenefit::create(array_merge($validated, [
@@ -654,16 +681,16 @@ class GratitudeController extends Controller
             }
 
             $isActive = $this->booleanFromValue($mapping['is_active'] ?? true, true);
-            $calculation = $this->normalizeJsonPayload($mapping['calculation'] ?? null, "level_mappings.$key.calculation");
+            $mapping['is_active'] = $isActive;
+            $mapping['web_status'] = $isActive
+                ? $this->booleanFromValue($mapping['web_status'] ?? true, true)
+                : false;
 
-            $syncData[(int) $levelId] = [
-                'value' => $mapping['value'] ?? null,
-                'description' => $mapping['description'] ?? null,
-                'value_type' => $mapping['value_type'] ?? 'fixed',
-                'calculation' => $calculation !== null ? json_encode($calculation) : null,
-                'is_active' => $isActive,
-                'web_status' => $isActive ? $this->booleanFromValue($mapping['web_status'] ?? true, true) : false,
-            ];
+            $syncData[(int) $levelId] = $this->gratitudeBenefitsService->normalizeLevelMapping(
+                $benefit,
+                $mapping,
+                "level_mappings.$key"
+            );
         }
 
         $benefit->levels()->sync($syncData);

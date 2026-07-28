@@ -16,6 +16,7 @@ use App\Models\User;
 use App\Services\Gratitude\BonusPointService;
 use App\Services\Gratitude\CancellationService;
 use App\Services\Gratitude\EarnedPointService;
+use App\Services\Gratitude\GratitudeBenefitsService;
 use App\Services\Gratitude\GratitudeService;
 use App\Services\Gratitude\PointService;
 use App\Services\Gratitude\TierService;
@@ -399,6 +400,191 @@ class GratitudeServiceTest extends TestCase
             'description' => 'Updated priority help desk support',
             'is_active' => false,
         ]);
+    }
+
+    public function test_level_benefit_rules_store_currency_and_format_per_person_amounts()
+    {
+        $level = GratitudeLevel::where('name', 'Explorer')->firstOrFail();
+        $benefit = GratitudeBenefit::create([
+            'name' => 'Reduced Journey Deposit',
+            'benefit_key' => 'reduced_journey_deposit',
+            'type' => 'journey',
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($this->user)
+            ->putJson("/internal-api/gratitude/program-benefits/{$benefit->id}", [
+                'level_mappings' => [
+                    $level->id => [
+                        'enabled' => true,
+                        'value' => '250',
+                        'description' => 'Deposit reduction',
+                        'calculation' => [
+                            'key' => 'per_person',
+                            'currency' => 'usd',
+                        ],
+                        'is_active' => true,
+                        'web_status' => true,
+                    ],
+                ],
+            ])
+            ->assertOk();
+
+        $mapping = $benefit->fresh()->levels()->whereKey($level->id)->firstOrFail()->pivot;
+
+        $this->assertSame('250', $mapping->value);
+        $this->assertSame('number', $mapping->value_type);
+        $this->assertSame([
+            'key' => 'per_person',
+            'currency' => 'USD',
+        ], is_array($mapping->calculation)
+            ? $mapping->calculation
+            : json_decode($mapping->calculation, true));
+
+        $this->actingAs($this->user)
+            ->getJson('/internal-api/gratitude/program-benefits')
+            ->assertOk()
+            ->assertJsonPath('grid.0.levels.'.$level->id.'.rule_key', 'per_person')
+            ->assertJsonPath('grid.0.levels.'.$level->id.'.currency', 'USD')
+            ->assertJsonPath('grid.0.levels.'.$level->id.'.formatted_value', 'USD 250 per person');
+    }
+
+    public function test_numeric_level_benefit_rules_require_a_number()
+    {
+        $level = GratitudeLevel::where('name', 'Explorer')->firstOrFail();
+        $benefit = GratitudeBenefit::create([
+            'name' => 'Referral Reward',
+            'benefit_key' => 'referral_reward',
+            'type' => 'referral',
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($this->user)
+            ->putJson("/internal-api/gratitude/program-benefits/{$benefit->id}", [
+                'level_mappings' => [
+                    $level->id => [
+                        'enabled' => true,
+                        'value' => 'five thousand',
+                        'calculation' => ['key' => 'referral_points'],
+                        'is_active' => true,
+                        'web_status' => true,
+                    ],
+                ],
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors([
+                'level_mappings.'.$level->id.'.value',
+            ]);
+    }
+
+    public function test_legacy_level_benefit_values_are_inferred_into_supported_rules()
+    {
+        $service = app(GratitudeBenefitsService::class);
+        $examples = [
+            [
+                'name' => 'Earn points for successful referrals',
+                'value' => '5,000 points',
+                'key' => 'referral_points',
+                'formatted' => '5,000 referral points',
+            ],
+            [
+                'name' => 'Reduced deposits',
+                'value' => 'by $250/person',
+                'key' => 'per_person',
+                'formatted' => 'USD 250 per person',
+            ],
+            [
+                'name' => 'Room credit',
+                'value' => 'EUR 400 per room',
+                'key' => 'per_room',
+                'formatted' => 'EUR 400 per room',
+            ],
+            [
+                'name' => 'Complimentary airport transfers',
+                'value' => 'limit 50 miles',
+                'key' => 'miles',
+                'formatted' => '50 miles',
+            ],
+            [
+                'name' => 'Use points on journeys',
+                'value' => '35 points for every $1 off',
+                'key' => 'points_per_dollar',
+                'formatted' => '35 points per dollar',
+            ],
+        ];
+
+        foreach ($examples as $example) {
+            $benefit = new GratitudeBenefit([
+                'name' => $example['name'],
+                'benefit_key' => str($example['name'])->snake()->toString(),
+            ]);
+            $rule = $service->levelBenefitRule($benefit, (object) [
+                'value' => $example['value'],
+                'calculation' => null,
+            ]);
+
+            $this->assertSame($example['key'], $rule['key']);
+            $this->assertSame($example['formatted'], $rule['formatted_value']);
+        }
+    }
+
+    public function test_member_accounts_only_offer_benefits_for_the_current_level()
+    {
+        $explorer = GratitudeLevel::where('name', 'Explorer')->firstOrFail();
+        $globetrotter = GratitudeLevel::where('name', 'Globetrotter')->firstOrFail();
+
+        $referralBenefit = GratitudeBenefit::create([
+            'name' => 'Referral Reward',
+            'benefit_key' => 'referral_reward',
+            'type' => 'referral',
+            'is_active' => true,
+        ]);
+        $referralBenefit->levels()->attach($explorer->id, [
+            'value' => '5000',
+            'description' => 'Successful referral',
+            'value_type' => 'number',
+            'calculation' => json_encode(['key' => 'referral_points']),
+            'is_active' => true,
+            'web_status' => true,
+        ]);
+
+        $otherLevelBenefit = GratitudeBenefit::create([
+            'name' => 'Globetrotter Only',
+            'benefit_key' => 'globetrotter_only',
+            'type' => 'service',
+            'is_active' => true,
+        ]);
+        $otherLevelBenefit->levels()->attach($globetrotter->id, [
+            'value' => 'Included',
+            'value_type' => 'text',
+            'calculation' => json_encode(['key' => 'text']),
+            'is_active' => true,
+            'web_status' => true,
+        ]);
+
+        $this->actingAs($this->user)
+            ->getJson("/internal-api/gratitude/account/show/{$this->gratitudeNumber}")
+            ->assertOk()
+            ->assertJsonCount(1, 'available_benefits')
+            ->assertJsonPath('available_benefits.0.benefit_key', 'referral_reward')
+            ->assertJsonPath('available_benefits.0.formatted_value', '5,000 referral points');
+
+        $this->actingAs($this->user)
+            ->postJson("/internal-api/gratitude/{$this->gratitudeNumber}/earned-benefits", [
+                'benefit_id' => $referralBenefit->id,
+                'date' => Carbon::today()->toDateString(),
+            ])
+            ->assertCreated()
+            ->assertJsonPath('earned_benefit.benefit_value', '5,000 referral points')
+            ->assertJsonPath('earned_benefit.value_type', 'referral_points');
+
+        $this->actingAs($this->user)
+            ->postJson("/internal-api/gratitude/{$this->gratitudeNumber}/earned-benefits", [
+                'benefit_id' => $otherLevelBenefit->id,
+                'date' => Carbon::today()->toDateString(),
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['benefit_id']);
     }
 
     public function test_external_api_can_get_points_history()

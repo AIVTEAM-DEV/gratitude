@@ -59,12 +59,17 @@ const openModal = () => {
                         <Input v-model="form.description" />
                     </div>
                     <div>
-                        <Label>Type</Label>
+                        <Label>Default Rule</Label>
                         <select v-model="form.type" class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
-                            <option value="fixed">Fixed</option>
-                            <option value="percentage">Percentage</option>
-                            <option value="multiplier">Multiplier</option>
-                            <option value="custom">Custom</option>
+                            <option v-if="form.type && !['text', 'per_person', 'per_room', 'miles', 'points_per_dollar', 'referral_points'].includes(form.type)" :value="form.type">
+                                Legacy: {{ form.type }}
+                            </option>
+                            <option value="text">Text / Included</option>
+                            <option value="per_person">Amount per person</option>
+                            <option value="per_room">Amount per room</option>
+                            <option value="miles">Miles</option>
+                            <option value="points_per_dollar">Points per dollar</option>
+                            <option value="referral_points">Referral points</option>
                         </select>
                     </div>
                     <div class="flex items-center space-x-2">

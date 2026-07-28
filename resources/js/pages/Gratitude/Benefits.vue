@@ -82,7 +82,7 @@ onMounted(() => {
                             <th
                                 class="px-6 py-3 text-left text-xs font-medium tracking-wider text-muted-foreground uppercase"
                             >
-                                Type
+                                Default Rule
                             </th>
                             <th
                                 class="px-6 py-3 text-left text-xs font-medium tracking-wider text-muted-foreground uppercase"
@@ -124,7 +124,12 @@ onMounted(() => {
                             <td
                                 class="px-6 py-4 whitespace-nowrap text-muted-foreground capitalize"
                             >
-                                {{ benefit.type }}
+                                {{
+                                    (benefit.type || 'text').replaceAll(
+                                        '_',
+                                        ' ',
+                                    )
+                                }}
                             </td>
                             <td
                                 class="px-6 py-4 whitespace-nowrap text-muted-foreground"

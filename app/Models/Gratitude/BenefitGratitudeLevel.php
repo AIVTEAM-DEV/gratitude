@@ -20,7 +20,7 @@ class BenefitGratitudeLevel extends Pivot
     ];
 
     protected $casts = [
-        'calculation' => 'json',
+        'calculation' => 'array',
         'is_active' => 'boolean',
         'web_status' => 'boolean',
     ];

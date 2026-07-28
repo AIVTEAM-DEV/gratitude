@@ -12,7 +12,6 @@ use App\Models\Gratitude\BonusPoint;
 use App\Models\Gratitude\Cancellation;
 use App\Models\Gratitude\EarnedPoint;
 use App\Models\Gratitude\Gratitude;
-use App\Models\Gratitude\GratitudeBenefit;
 use App\Models\Gratitude\GratitudeEarnedBenefit;
 use App\Models\Gratitude\GratitudeLevel;
 use App\Models\Gratitude\GratitudeReserve;
@@ -22,6 +21,7 @@ use App\Services\Gratitude\BonusPointService;
 use App\Services\Gratitude\CancellationService;
 use App\Services\Gratitude\EarnedPointService;
 use App\Services\Gratitude\GratitudeAccountService;
+use App\Services\Gratitude\GratitudeBenefitsService;
 use App\Services\Gratitude\GratitudeService;
 use App\Services\Gratitude\TierService;
 use Carbon\Carbon;
@@ -39,6 +39,7 @@ class GratitudeController extends Controller
         protected BonusPointService $bonusPointService,
         protected CancellationService $cancellationService,
         protected TierService $tierService,
+        protected GratitudeBenefitsService $gratitudeBenefitsService,
     ) {}
 
     public function apiIndex(Request $request)
@@ -162,27 +163,33 @@ class GratitudeController extends Controller
         $guests = Gratitude::normalizeGuestsData($gratitude->guests_data ?? []);
 
         $level = GratitudeLevel::where('name', $gratitude->level)->first();
-        $benefits = [];
+        $benefits = collect();
         if ($level) {
-            $benefits = GratitudeBenefit::whereHas('levels', function ($q) use ($level) {
-                $q->where('benefit_gratitude_level.gratitude_level_id', $level->id)
-                    ->where('benefit_gratitude_level.is_active', true);
-            })->with([
-                'levels' => function ($q) use ($level) {
-                    $q->where('benefit_gratitude_level.gratitude_level_id', $level->id);
-                },
-            ])->get()->map(function ($benefit) {
-                // Simplify the output for the frontend
-                $levelPivot = $benefit->levels->first();
+            $benefits = $level->benefits()
+                ->where('gratitude_benefits.is_active', true)
+                ->wherePivot('is_active', true)
+                ->orderBy('gratitude_benefits.name')
+                ->get()
+                ->map(function ($benefit) {
+                    $rule = $this->gratitudeBenefitsService->levelBenefitRule($benefit, $benefit->pivot);
 
-                return [
-                    'id' => $benefit->id,
-                    'name' => $benefit->name,
-                    'benefit_description' => $benefit->description,
-                    'value' => $levelPivot ? $levelPivot->pivot->value : null,
-                    'level_description' => $levelPivot ? $levelPivot->pivot->description : null,
-                ];
-            });
+                    return [
+                        'id' => $benefit->id,
+                        'name' => $benefit->name,
+                        'benefit_key' => $benefit->benefit_key,
+                        'type' => $benefit->type,
+                        'benefit_description' => $benefit->description,
+                        'description' => $benefit->pivot->description ?: $benefit->description,
+                        'level_description' => $benefit->pivot->description,
+                        'value' => $benefit->pivot->value,
+                        'rule_value' => $rule['value'],
+                        'formatted_value' => $rule['formatted_value'],
+                        'value_type' => $benefit->pivot->value_type,
+                        'rule_key' => $rule['key'],
+                        'currency' => $rule['currency'],
+                        'calculation' => $rule['calculation'],
+                    ];
+                });
         }
 
         $earnedPoints = EarnedPoint::with(['cancellation', 'redemptions.redeemPoint'])->where('gratitudeNumber', $gratitudeNumber)->get();
@@ -235,9 +242,7 @@ class GratitudeController extends Controller
             ->orderByDesc('id')
             ->get();
 
-        $availableBenefits = GratitudeBenefit::where('is_active', true)
-            ->orderBy('name')
-            ->get(['id', 'name', 'benefit_key', 'description', 'type']);
+        $availableBenefits = $benefits->values();
         $pointsPerDollar = max(1, (float) ($level?->redemption_points_per_dollar ?: 35));
         $partnerPointsPerDollar = max(1, (float) ($level?->partner_points_per_dollar ?: $pointsPerDollar));
         $giftCardPointsPerDollar = max(1, (float) ($level?->gift_card_points_per_dollar ?: $pointsPerDollar));
