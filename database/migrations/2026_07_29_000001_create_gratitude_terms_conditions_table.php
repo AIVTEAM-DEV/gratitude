@@ -15,7 +15,8 @@ return new class extends Migration
             $table->text('content');
             $table->boolean('status')->default(true)->index();
             $table->unsignedInteger('sort_order')->default(0);
-            $table->string('source_key')->nullable()->unique();
+            // Keep the utf8mb4 unique index within MyISAM's 1000-byte key limit.
+            $table->string('source_key', 191)->nullable()->unique();
             $table->timestamps();
         });
 
