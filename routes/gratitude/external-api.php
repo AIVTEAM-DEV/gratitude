@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\Gratitude\GratitudeController;
+use App\Http\Controllers\Api\Gratitude\TermsConditions\GratitudeTermConditionApiController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('gratitude')->name('gratitude.')->group(function () {
@@ -14,6 +15,10 @@ Route::prefix('gratitude')->name('gratitude.')->group(function () {
     Route::put('levels/{level}', [GratitudeController::class, 'updateLevel'])->name('levels.update');
     Route::get('levels/{level}/benefits', [GratitudeController::class, 'benefitsByLevel'])->name('levels.benefits');
     Route::get('benefits', [GratitudeController::class, 'benefits'])->name('benefits.index');
+    Route::get('terms-conditions', [GratitudeTermConditionApiController::class, 'index'])->name('terms-conditions.index');
+    Route::post('terms-conditions', [GratitudeTermConditionApiController::class, 'store'])->name('terms-conditions.store');
+    Route::put('terms-conditions/{term}', [GratitudeTermConditionApiController::class, 'update'])->name('terms-conditions.update');
+    Route::delete('terms-conditions/{term}', [GratitudeTermConditionApiController::class, 'destroy'])->name('terms-conditions.destroy');
     Route::post('benefits', [GratitudeController::class, 'storeBenefit'])->name('benefits.store');
     Route::put('benefits/{benefit}', [GratitudeController::class, 'updateBenefit'])->name('benefits.update');
     Route::get('{gratitudeNumber}/balance', [GratitudeController::class, 'balance'])->name('balance');

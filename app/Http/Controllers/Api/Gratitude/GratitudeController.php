@@ -507,8 +507,6 @@ class GratitudeController extends Controller
             'jetsetter_min_journey_days' => [$optional, 'nullable', 'integer', 'min:0'],
             'stay_active_rules' => [$optional, 'nullable', 'string'],
             'level_rules' => [$optional, 'nullable'],
-            'terms_conditions' => [$optional, 'nullable', 'string'],
-            'level_terms_conditions' => [$optional, 'nullable', 'string'],
             'level_image' => [$optional, 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,gif,svg', 'max:4096'],
             'level_icon' => [$optional, 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,gif,svg', 'max:4096'],
         ];
@@ -524,8 +522,6 @@ class GratitudeController extends Controller
             'jetsetter_min_journeys',
             'jetsetter_min_journey_days',
             'stay_active_rules',
-            'terms_conditions',
-            'level_terms_conditions',
         ];
         $defaultedFields = [
             'redemption_points_per_dollar' => 35,

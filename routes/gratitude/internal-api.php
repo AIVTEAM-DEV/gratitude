@@ -60,6 +60,8 @@ Route::name('gratitude.')->prefix('gratitude/')
         Route::get('program-benefits', [ProgramLevelBenefitController::class, 'index'])->name('program-benefits.index');
         Route::put('program-benefits/{benefit}', [ProgramLevelBenefitController::class, 'update'])->name('program-benefits.update');
 
+        require __DIR__.'/terms-conditions/internal-api.php';
+
         // Import Benefits
         Route::get('migrate-benefits/data', [GratitudeImportData::class, 'importBenefits'])->name('migrate-benefits.data');
 

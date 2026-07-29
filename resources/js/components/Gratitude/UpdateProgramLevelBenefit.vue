@@ -36,7 +36,7 @@ const openModal = () => {
         const pivot = props.benefit.levels[l.id];
         form.value.level_mappings[l.id] = {
             enabled: pivot?.has_benefit || false,
-            value: pivot?.rule_value ?? pivot?.value ?? '',
+            value: String(pivot?.rule_value ?? pivot?.value ?? ''),
             description: pivot?.description || '',
             value_type: pivot?.value_type || 'text',
             calculation: {

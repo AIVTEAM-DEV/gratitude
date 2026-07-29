@@ -11,6 +11,27 @@ class UpdateProgramLevelBenefitRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        $levelMappings = $this->input('level_mappings');
+
+        if (! is_array($levelMappings)) {
+            return;
+        }
+
+        foreach ($levelMappings as $levelId => $mapping) {
+            if (
+                is_array($mapping)
+                && array_key_exists('value', $mapping)
+                && is_numeric($mapping['value'])
+            ) {
+                $levelMappings[$levelId]['value'] = (string) $mapping['value'];
+            }
+        }
+
+        $this->merge(['level_mappings' => $levelMappings]);
+    }
+
     public function rules(): array
     {
         return [

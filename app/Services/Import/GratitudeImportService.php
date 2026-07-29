@@ -8,6 +8,7 @@ use App\Models\Gratitude\EarnedPoint;
 use App\Models\Gratitude\Gratitude;
 use App\Models\Gratitude\GratitudeBenefit;
 use App\Models\Gratitude\GratitudeLevel;
+use App\Models\Gratitude\GratitudeTermCondition;
 use App\Models\Gratitude\RedeemPoints;
 use App\Models\Gratitude\RedeemPointsDetails;
 use App\Services\Gratitude\GratitudeBenefitsService;
@@ -397,6 +398,7 @@ class GratitudeImportService
         $explorerLevel = $levels->first(fn ($level) => stripos($level->name, 'Explorer') !== false);
         $globetrotterLevel = $levels->first(fn ($level) => stripos($level->name, 'Globetrotter') !== false);
         $jetsetterLevel = $levels->first(fn ($level) => stripos($level->name, 'Jetsetter') !== false || stripos($level->name, 'Jetesetter') !== false);
+        $terms = $this->fineprintTerms($data);
 
         $benefitNames = collect($data['benefits'])
             ->pluck('gratitude_benefit.benefit_name')
@@ -409,6 +411,7 @@ class GratitudeImportService
             ->keyBy('name');
 
         $imported = 0;
+        $termsImported = 0;
 
         try {
             DB::transaction(function () use (
@@ -417,7 +420,9 @@ class GratitudeImportService
                 $explorerLevel,
                 $globetrotterLevel,
                 $jetsetterLevel,
-                &$imported
+                $terms,
+                &$imported,
+                &$termsImported,
             ) {
                 foreach ($data['benefits'] as $value) {
                     $benefitData = $value['gratitude_benefit'] ?? null;
@@ -460,6 +465,33 @@ class GratitudeImportService
                     $benefit->levels()->sync($syncData);
                     $imported++;
                 }
+
+                if ($terms !== []) {
+                    $sourceKeys = collect($terms)->pluck('source_key');
+
+                    foreach ($terms as $termData) {
+                        $term = GratitudeTermCondition::firstOrNew([
+                            'source_key' => $termData['source_key'],
+                        ]);
+                        $term->fill([
+                            'title' => $termData['title'],
+                            'content' => $termData['content'],
+                            'sort_order' => $termData['sort_order'],
+                        ]);
+
+                        if (! $term->exists) {
+                            $term->status = true;
+                        }
+
+                        $term->save();
+                        $termsImported++;
+                    }
+
+                    GratitudeTermCondition::query()
+                        ->where('source_key', 'like', 'art-in-voyage-fineprint-%')
+                        ->whereNotIn('source_key', $sourceKeys)
+                        ->delete();
+                }
             });
         } catch (\Throwable $e) {
             $this->logImportException('Gratitude benefits import failed while saving records.', $e, [
@@ -472,8 +504,11 @@ class GratitudeImportService
 
         return $this->result([
             'success' => true,
-            'message' => 'Benefits imported successfully',
+            'message' => $termsImported > 0
+                ? 'Benefits and terms imported successfully'
+                : 'Benefits imported successfully',
             'imported' => $imported,
+            'terms_imported' => $termsImported,
         ]);
     }
 
@@ -1121,6 +1156,22 @@ class GratitudeImportService
             'is_active' => 1,
             'web_status' => 1,
         ];
+    }
+
+    private function fineprintTerms(array $data): array
+    {
+        return collect($data['fineprint_list'] ?? [])
+            ->pluck('fineprint_item')
+            ->map(fn ($item) => trim((string) $item))
+            ->filter()
+            ->values()
+            ->map(fn (string $content, int $index) => [
+                'title' => null,
+                'content' => $content,
+                'sort_order' => $index + 1,
+                'source_key' => 'art-in-voyage-fineprint-'.($index + 1),
+            ])
+            ->all();
     }
 
     private function defaultLevelName(): string

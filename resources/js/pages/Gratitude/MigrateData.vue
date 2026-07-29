@@ -79,7 +79,7 @@ const actions: ImportAction[] = [
     {
         key: 'benefits',
         title: 'Benefits',
-        description: 'Base benefits and level values',
+        description: 'Base benefits, level values, and program terms',
         endpoint: '/internal-api/gratitude/migrate-benefits/data',
         method: 'get',
         buttonLabel: 'Import Benefits',

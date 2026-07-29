@@ -43,6 +43,10 @@ const mainNavItems = computed<NavItem[]>(() => [
             { title: 'Accounts & Balances', href: '/gratitude/accounts' },
             { title: 'Levels', href: '/gratitude/levels' },
             { title: 'Benefits', href: '/gratitude/benefits' },
+            {
+                title: 'Terms & Conditions',
+                href: '/gratitude/terms-conditions',
+            },
             { title: 'Point Reserve', href: '/gratitude/reserve' },
             {
                 title: 'Level Benefit Matrix',

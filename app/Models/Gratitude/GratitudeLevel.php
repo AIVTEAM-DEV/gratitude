@@ -33,8 +33,6 @@ class GratitudeLevel extends Model
         'jetsetter_min_journey_days',
         'stay_active_rules',
         'level_rules',
-        'terms_conditions',
-        'level_terms_conditions',
         'level_image',
         'level_icon',
     ];

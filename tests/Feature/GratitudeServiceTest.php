@@ -417,7 +417,7 @@ class GratitudeServiceTest extends TestCase
                 'level_mappings' => [
                     $level->id => [
                         'enabled' => true,
-                        'value' => '250',
+                        'value' => 250,
                         'description' => 'Deposit reduction',
                         'calculation' => [
                             'key' => 'per_person',

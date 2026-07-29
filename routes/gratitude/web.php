@@ -13,4 +13,6 @@ Route::middleware(['auth'])->name('gratitude.')->prefix('gratitude')->group(func
     Route::get('/migrate-data', [GratitudeController::class, 'migrateData'])->name('migrate-data');
     Route::get('/program-level-benefits', [GratitudeController::class, 'programLevelBenefits'])->name('program-level-benefits');
     Route::get('/account/show/{gratitudeNumber}', [GratitudeController::class, 'show'])->name('account.show');
+
+    require __DIR__.'/terms-conditions/web.php';
 });
