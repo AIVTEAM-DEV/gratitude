@@ -73,6 +73,19 @@ class GratitudeService
         });
     }
 
+    public function updateAccountGuests(string $gratitudeNumber, array $data): Gratitude
+    {
+        return DB::transaction(function () use ($gratitudeNumber, $data) {
+            $gratitude = Gratitude::where('gratitudeNumber', $gratitudeNumber)->firstOrFail();
+
+            $gratitude->update([
+                'guests_data' => Gratitude::extractGuestsData($data),
+            ]);
+
+            return $gratitude->fresh();
+        });
+    }
+
     public function generateGratitudeNumber(string $prefix = 'G'): string
     {
         $prefix = strtoupper($prefix);

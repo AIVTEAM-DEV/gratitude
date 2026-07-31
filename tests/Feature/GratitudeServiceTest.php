@@ -112,17 +112,76 @@ class GratitudeServiceTest extends TestCase
 
         $response = $this->postJson('/api/v1/gratitude', [
             'gratitude_number' => 'G-EXT-1001',
+            'guests_data' => [[
+                'id' => 101,
+                'first_name' => 'Ava',
+                'last_name' => 'Primary',
+                'email' => 'ava@example.com',
+                'ownership' => 'primary',
+            ]],
         ]);
 
         $response
             ->assertCreated()
             ->assertJsonPath('message', 'Gratitude account created')
-            ->assertJsonPath('gratitude.gratitudeNumber', 'G-EXT-1001');
+            ->assertJsonPath('gratitude.gratitudeNumber', 'G-EXT-1001')
+            ->assertJsonPath('gratitude.guests_data.0.first_name', 'Ava');
 
         $this->assertDatabaseHas('gratitudes', [
             'gratitudeNumber' => 'G-EXT-1001',
             'level' => 'Explorer',
         ]);
+    }
+
+    public function test_external_api_can_sync_primary_and_secondary_account_guests()
+    {
+        $this->withoutMiddleware(ValidateBearerToken::class);
+
+        $response = $this->putJson("/api/v1/gratitude/{$this->gratitudeNumber}", [
+            'guests_data' => [
+                [
+                    'id' => 101,
+                    'first_name' => 'Ava',
+                    'last_name' => 'Primary',
+                    'email' => 'ava@example.com',
+                    'ownership' => 'primary',
+                ],
+                [
+                    'id' => 102,
+                    'first_name' => 'Noah',
+                    'last_name' => 'Secondary',
+                    'email' => 'noah@example.com',
+                    'ownership' => 'secondary',
+                ],
+            ],
+        ]);
+
+        $response
+            ->assertOk()
+            ->assertJsonPath('message', 'Gratitude account guests updated')
+            ->assertJsonPath('gratitude.guests_data.0.ownership', 'primary')
+            ->assertJsonPath('gratitude.guests_data.1.ownership', 'secondary');
+
+        $this->assertSame([
+            [
+                'id' => 101,
+                'first_name' => 'Ava',
+                'last_name' => 'Primary',
+                'preferred_name' => null,
+                'email' => 'ava@example.com',
+                'birthday' => null,
+                'ownership' => 'primary',
+            ],
+            [
+                'id' => 102,
+                'first_name' => 'Noah',
+                'last_name' => 'Secondary',
+                'preferred_name' => null,
+                'email' => 'noah@example.com',
+                'birthday' => null,
+                'ownership' => 'secondary',
+            ],
+        ], Gratitude::where('gratitudeNumber', $this->gratitudeNumber)->firstOrFail()->guests_data);
     }
 
     public function test_external_api_can_check_balance()

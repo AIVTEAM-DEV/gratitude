@@ -6,9 +6,11 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Gratitude\CancelPointRequest;
 use App\Http\Requests\Gratitude\StoreBonusPointRequest;
 use App\Http\Requests\Gratitude\StoreEarnedPointRequest;
+use App\Http\Requests\Gratitude\StoreGratitudeAccountRequest;
 use App\Http\Requests\Gratitude\StoreRedemptionRequest;
 use App\Http\Requests\Gratitude\UpdateBonusPointRequest;
 use App\Http\Requests\Gratitude\UpdateEarnedPointRequest;
+use App\Http\Requests\Gratitude\UpdateGratitudeAccountRequest;
 use App\Models\Gratitude\BonusPoint;
 use App\Models\Gratitude\Cancellation;
 use App\Models\Gratitude\EarnedPoint;
@@ -137,18 +139,24 @@ class GratitudeController extends Controller
         ]);
     }
 
-    public function store(Request $request)
+    public function store(StoreGratitudeAccountRequest $request)
     {
+        $validated = $request->validated();
 
-        $validated = $request->validate([
-            'category' => 'nullable|array',
-            'category.*' => 'integer|in:1,2,3',
-            'first_name' => 'nullable|string|max:255',
-            'last_name' => 'nullable|string|max:255',
-            'email' => 'nullable|email|max:255',
-            'client_id' => 'nullable|integer',
-            'gratitude_number' => 'nullable|string|max:255|unique:gratitudes,gratitudeNumber',
-        ]);
+        if (! isset($validated['guests_data']) && collect($validated)->only([
+            'client_id',
+            'first_name',
+            'last_name',
+            'email',
+        ])->filter()->isNotEmpty()) {
+            $validated['guests_data'] = [[
+                'id' => $validated['client_id'] ?? null,
+                'first_name' => $validated['first_name'] ?? null,
+                'last_name' => $validated['last_name'] ?? null,
+                'email' => $validated['email'] ?? null,
+                'ownership' => 'primary',
+            ]];
+        }
 
         $prefixes = ['1' => 'G', '2' => 'T', '3' => 'P'];
         $category = $validated['category'] ?? null;
@@ -164,6 +172,19 @@ class GratitudeController extends Controller
             'gratitude' => $gratitude,
             'prefix_used' => $prefix,
         ], 201);
+    }
+
+    public function update(UpdateGratitudeAccountRequest $request, string $gratitudeNumber)
+    {
+        $gratitude = $this->gratitudeService->updateAccountGuests(
+            $gratitudeNumber,
+            $request->validated(),
+        );
+
+        return response()->json([
+            'message' => 'Gratitude account guests updated',
+            'gratitude' => $gratitude,
+        ]);
     }
 
     public function show(string $gratitudeNumber)

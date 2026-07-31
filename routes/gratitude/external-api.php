@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Route;
 Route::prefix('gratitude')->name('gratitude.')->group(function () {
     Route::get('/all', [GratitudeController::class, 'index'])->name('index');
     Route::post('/', [GratitudeController::class, 'store'])->name('store');
+    Route::put('{gratitudeNumber}', [GratitudeController::class, 'update'])->name('update');
     Route::get('accounts/export/{format}', [GratitudeController::class, 'exportAccounts'])
         ->whereIn('format', ['pdf', 'excel', 'print'])
         ->name('accounts.export');
